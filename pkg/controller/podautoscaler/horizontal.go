@@ -18,6 +18,7 @@ package podautoscaler
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -51,25 +52,39 @@ import (
 )
 
 var (
+	scaleUpLimitFactor                     = 2.0
+	scaleUpLimitMinimum                    = 4.0
 	scaleUpLimitPercent              int32 = 100
-	scaleUpLimitMinimum              int32 = 4
+	scaleUpLimitMinimumPods          int32 = 4
 	scaleUpPeriod                    int32 = 60
 	scaleUpDelaySeconds              int32
-	defaultHPAScaleUpConstraintValue = autoscalingv2.HPAScaleConstraintValue{
-		Rate: &autoscalingv2.HPAScaleConstraintRateValue{
-			Pods:          &scaleUpLimitMinimum,
-			Percent:       &scaleUpLimitPercent,
-			PeriodSeconds: &scaleUpPeriod},
-		DelaySeconds: &scaleUpDelaySeconds,
+	maxPolicy                        = autoscalingv2.MaxPolicySelect
+	defaultHPAScaleUpConstraintValue = autoscalingv2.HPAScalingDirectionBehavior{
+		SelectPolicy: &maxPolicy,
+		Policies: []autoscalingv2.HPAScalingPolicy{
+			{
+				Type:          autoscalingv2.PodsScalingPolicy,
+				Value:         scaleUpLimitMinimumPods,
+				PeriodSeconds: 60,
+			},
+			{
+				Type:          autoscalingv2.PercentScalingPolicy,
+				Value:         scaleUpLimitPercent,
+				PeriodSeconds: 60,
+			},
+		},
 	}
 	scaleDownPeriod                    int32 = 60
 	scaleDownDelaySeconds              int32 = 300
-	defaultHPAScaleDownConstraintValue       = autoscalingv2.HPAScaleConstraintValue{
-		Rate: &autoscalingv2.HPAScaleConstraintRateValue{
-			Pods:          nil,
-			Percent:       nil,
-			PeriodSeconds: &scaleDownPeriod},
-		DelaySeconds: &scaleDownDelaySeconds,
+	defaultHPAScaleDownConstraintValue       = autoscalingv2.HPAScalingDirectionBehavior{
+		SelectPolicy: &maxPolicy,
+		Policies: []autoscalingv2.HPAScalingPolicy{
+			{
+				Type:          autoscalingv2.PercentScalingPolicy,
+				Value:         100,
+				PeriodSeconds: 60,
+			},
+		},
 	}
 )
 
@@ -95,6 +110,8 @@ type HorizontalController struct {
 	replicaCalc   *ReplicaCalculator
 	eventRecorder record.EventRecorder
 
+	downscaleStabilisationWindow time.Duration
+
 	// hpaLister is able to list/get HPAs from the shared cache from the informer passed in to
 	// NewHorizontalController.
 	hpaLister       autoscalinglisters.HorizontalPodAutoscalerLister
@@ -108,7 +125,7 @@ type HorizontalController struct {
 	// Controllers that need to be synced
 	queue workqueue.RateLimitingInterface
 
-	// Latest unstabilized recommendations for each autoscaler
+	// Latest unstabilized recommendations for each autoscaler.
 	recommendations map[string][]timestampedRecommendation
 
 	// Latest autoscaler events
@@ -126,6 +143,7 @@ func NewHorizontalController(
 	hpaInformer autoscalinginformers.HorizontalPodAutoscalerInformer,
 	podInformer coreinformers.PodInformer,
 	resyncPeriod time.Duration,
+	downscaleStabilisationWindow time.Duration,
 	tolerance float64,
 	cpuInitializationPeriod,
 	delayOfInitialReadinessStatus time.Duration,
@@ -137,14 +155,15 @@ func NewHorizontalController(
 	recorder := broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "horizontal-pod-autoscaler"})
 
 	hpaController := &HorizontalController{
-		eventRecorder:   recorder,
-		scaleNamespacer: scaleNamespacer,
-		hpaNamespacer:   hpaNamespacer,
-		queue:           workqueue.NewNamedRateLimitingQueue(NewDefaultHPARateLimiter(resyncPeriod), "horizontalpodautoscaler"),
-		mapper:          mapper,
-		recommendations: map[string][]timestampedRecommendation{},
-		scaleUpEvents:   map[string][]timestampedScaleEvent{},
-		scaleDownEvents: map[string][]timestampedScaleEvent{},
+		eventRecorder:                recorder,
+		scaleNamespacer:              scaleNamespacer,
+		hpaNamespacer:                hpaNamespacer,
+		downscaleStabilisationWindow: downscaleStabilisationWindow,
+		queue:                        workqueue.NewNamedRateLimitingQueue(NewDefaultHPARateLimiter(resyncPeriod), "horizontalpodautoscaler"),
+		mapper:                       mapper,
+		recommendations:              map[string][]timestampedRecommendation{},
+		scaleUpEvents:                map[string][]timestampedScaleEvent{},
+		scaleDownEvents:              map[string][]timestampedScaleEvent{},
 	}
 
 	hpaInformer.Informer().AddEventHandlerWithResyncPeriod(
@@ -650,7 +669,11 @@ func (a *HorizontalController) reconcileAutoscaler(hpav1Shared *autoscalingv1.Ho
 		if desiredReplicas < currentReplicas {
 			rescaleReason = "All metrics below target"
 		}
-		desiredReplicas = a.normalizeDesiredReplicas(hpa, key, currentReplicas, desiredReplicas, minReplicas)
+		if hpa.Spec.Behavior == nil {
+			desiredReplicas = a.normalizeDesiredReplicas(hpa, key, currentReplicas, desiredReplicas, minReplicas)
+		} else {
+			desiredReplicas = a.normalizeDesiredReplicasWithConstraints(hpa, key, currentReplicas, desiredReplicas)
+		}
 		rescale = desiredReplicas != currentReplicas
 	}
 
@@ -680,31 +703,77 @@ func (a *HorizontalController) reconcileAutoscaler(hpav1Shared *autoscalingv1.Ho
 	return a.updateStatusIfNeeded(hpaStatusOriginal, hpa)
 }
 
-type NormalizationArg struct {
-	Key                 string
-	ScaleUpConstraint   *autoscalingv2.HPAScaleConstraintValue
-	ScaleDownConstraint *autoscalingv2.HPAScaleConstraintValue
-	MinReplicas         *int32
-	MaxReplicas         int32
-	CurrentReplicas     int32
-	DesiredReplicas     int32
+// stabilizeRecommendation:
+// - replaces old recommendation with the newest recommendation,
+// - returns max of recommendations that are not older than downscaleStabilisationWindow.
+func (a *HorizontalController) stabilizeRecommendation(key string, prenormalizedDesiredReplicas int32) int32 {
+	maxRecommendation := prenormalizedDesiredReplicas
+	foundOldSample := false
+	oldSampleIndex := 0
+	cutoff := time.Now().Add(-a.downscaleStabilisationWindow)
+	for i, rec := range a.recommendations[key] {
+		if rec.timestamp.Before(cutoff) {
+			foundOldSample = true
+			oldSampleIndex = i
+		} else if rec.recommendation > maxRecommendation {
+			maxRecommendation = rec.recommendation
+		}
+	}
+	if foundOldSample {
+		a.recommendations[key][oldSampleIndex] = timestampedRecommendation{prenormalizedDesiredReplicas, time.Now()}
+	} else {
+		a.recommendations[key] = append(a.recommendations[key], timestampedRecommendation{prenormalizedDesiredReplicas, time.Now()})
+	}
+	return maxRecommendation
 }
 
-// normalizeDesiredReplicas takes the metrics desired replicas value and normalizes it:
+// normalizeDesiredReplicas takes the metrics desired replicas value and normalizes it based on the appropriate conditions (i.e. < maxReplicas, >
+// minReplicas, etc...)
+func (a *HorizontalController) normalizeDesiredReplicas(hpa *autoscalingv2.HorizontalPodAutoscaler, key string, currentReplicas int32, prenormalizedDesiredReplicas int32, minReplicas int32) int32 {
+	stabilizedRecommendation := a.stabilizeRecommendation(key, prenormalizedDesiredReplicas)
+	if stabilizedRecommendation != prenormalizedDesiredReplicas {
+		setCondition(hpa, autoscalingv2.AbleToScale, v1.ConditionTrue, "ScaleDownStabilized", "recent recommendations were higher than current one, applying the highest recent recommendation")
+	} else {
+		setCondition(hpa, autoscalingv2.AbleToScale, v1.ConditionTrue, "ReadyForNewScale", "recommended size matches current size")
+	}
+
+	desiredReplicas, condition, reason := convertDesiredReplicasWithRules(currentReplicas, stabilizedRecommendation, minReplicas, hpa.Spec.MaxReplicas)
+
+	if desiredReplicas == stabilizedRecommendation {
+		setCondition(hpa, autoscalingv2.ScalingLimited, v1.ConditionFalse, condition, reason)
+	} else {
+		setCondition(hpa, autoscalingv2.ScalingLimited, v1.ConditionTrue, condition, reason)
+	}
+
+	return desiredReplicas
+}
+
+type NormalizationArg struct {
+	Key                        string
+	StabilizationWindowSeconds int32
+	ScaleUpConstraint          *autoscalingv2.HPAScalingDirectionBehavior
+	ScaleDownConstraint        *autoscalingv2.HPAScalingDirectionBehavior
+	MinReplicas                *int32
+	MaxReplicas                int32
+	CurrentReplicas            int32
+	DesiredReplicas            int32
+}
+
+// normalizeDesiredReplicasWithConstraints takes the metrics desired replicas value and normalizes it:
 // 1. Apply the basic conditions (i.e. < maxReplicas, > minReplicas, etc...)
 // 2. Apply the scale up/down limits from the hpaSpec.Constraints (i.e. add no more than 4 pods)
 // 3. Apply the constraints period (i.e. add no more than 4 pods per minute)
 // 4. Apply the constraints delay (i.e. add no more than 4 pods per minute, and pick the smallest recommendation during last 5 minutes)
-func (a *HorizontalController) normalizeDesiredReplicas(hpa *autoscalingv2.HorizontalPodAutoscaler, key string, currentReplicas int32, prenormalizedDesiredReplicas int32, minReplicas int32) int32 {
+func (a *HorizontalController) normalizeDesiredReplicasWithConstraints(hpa *autoscalingv2.HorizontalPodAutoscaler, key string, currentReplicas int32, prenormalizedDesiredReplicas int32) int32 {
 	normalizationArg := NormalizationArg{
 		Key:                 key,
-		ScaleUpConstraint:   generateHPAScaleUpConstraint(hpa.Spec.Constraints),
-		ScaleDownConstraint: generateHPAScaleDownConstraint(hpa.Spec.Constraints),
-		MinReplicas:         minReplicas,
+		ScaleUpConstraint:   generateHPAScaleUpConstraint(hpa.Spec.Behavior.ScaleUp),
+		ScaleDownConstraint: generateHPAScaleDownConstraint(hpa.Spec.Behavior.ScaleDown),
+		MinReplicas:         hpa.Spec.MinReplicas,
 		MaxReplicas:         hpa.Spec.MaxReplicas,
 		CurrentReplicas:     currentReplicas,
 		DesiredReplicas:     prenormalizedDesiredReplicas}
-	stabilizedRecommendation, reason, message := a.stabilizeRecommendation(normalizationArg)
+	stabilizedRecommendation, reason, message := a.stabilizeRecommendationWithConstraints(normalizationArg)
 	normalizationArg.DesiredReplicas = stabilizedRecommendation
 	if stabilizedRecommendation != prenormalizedDesiredReplicas {
 		// "ScaleUpStabilized" || "ScaleDownStabilized"
@@ -787,10 +856,10 @@ func (a *HorizontalController) storeScaleEvent(key string, prevReplicas, newRepl
 	}
 }
 
-// stabilizeRecommendation:
+// stabilizeRecommendationWithConstraints:
 // - replaces old recommendation with the newest recommendation,
 // - returns max of recommendations that are not older than constraints.Scale{Up,Down}.DelaySeconds
-func (a *HorizontalController) stabilizeRecommendation(args NormalizationArg) (int32, string, string) {
+func (a *HorizontalController) stabilizeRecommendationWithConstraints(args NormalizationArg) (int32, string, string) {
 	recommendation := args.DesiredReplicas
 	foundOldSample := false
 	oldSampleIndex := 0
@@ -800,18 +869,18 @@ func (a *HorizontalController) stabilizeRecommendation(args NormalizationArg) (i
 	var betterRecommendation func(int32, int32) int32
 
 	if args.DesiredReplicas >= args.CurrentReplicas {
-		scaleDelaySeconds = *args.ScaleUpConstraint.DelaySeconds
+		scaleDelaySeconds = args.StabilizationWindowSeconds
 		betterRecommendation = min
 		reason = "ScaleUpStabilized"
 		message = "recent recommendations were lower than current one, applying the lowest recent recommendation"
 	} else {
-		scaleDelaySeconds = *args.ScaleDownConstraint.DelaySeconds
+		scaleDelaySeconds = args.StabilizationWindowSeconds
 		betterRecommendation = max
 		reason = "ScaleDownStabilized"
 		message = "recent recommendations were higher than current one, applying the highest recent recommendation"
 	}
 
-	maxDelaySeconds := max(*args.ScaleUpConstraint.DelaySeconds, *args.ScaleDownConstraint.DelaySeconds)
+	maxDelaySeconds := args.StabilizationWindowSeconds
 	obsoleteCutoff := time.Now().Add(-time.Second * time.Duration(maxDelaySeconds))
 
 	cutoff := time.Now().Add(-time.Second * time.Duration(scaleDelaySeconds))
@@ -834,44 +903,33 @@ func (a *HorizontalController) stabilizeRecommendation(args NormalizationArg) (i
 
 // generateHPAScaleUpConstraint returns a fully-initialized HPAScaleConstraintValue
 // i.e. all the pointers that are `nil` in the input parameter, will be filled with default values
-func generateHPAScaleUpConstraint(hpaConstraints *autoscalingv2.HPAScaleConstraints) *autoscalingv2.HPAScaleConstraintValue {
+func generateHPAScaleUpConstraint(directionBehavior *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	defaultConstraint := defaultHPAScaleUpConstraintValue.DeepCopy()
-	if hpaConstraints == nil {
+	if directionBehavior == nil {
 		return defaultConstraint
 	} else {
-		return copyHPAConstraint(hpaConstraints.ScaleUp, defaultConstraint)
+		return copyHPAConstraint(directionBehavior, defaultConstraint)
 	}
 }
 
 // generateHPAScaleDownConstraint returns a fully-initialized HPAScaleConstraintValue
 // i.e. all the pointers that are `nil` in the input parameter, will be filled with default values
-func generateHPAScaleDownConstraint(hpaConstraints *autoscalingv2.HPAScaleConstraints) *autoscalingv2.HPAScaleConstraintValue {
+func generateHPAScaleDownConstraint(hpaConstraints *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	defaultConstraint := defaultHPAScaleDownConstraintValue.DeepCopy()
 	if hpaConstraints == nil {
 		return defaultConstraint
 	} else {
-		return copyHPAConstraint(hpaConstraints.ScaleDown, defaultConstraint)
+		return copyHPAConstraint(hpaConstraints, defaultConstraint)
 	}
 }
 
 // copyHPAConstraint copies all non-`nil` fields in HPA constraint structure
-func copyHPAConstraint(from, to *autoscalingv2.HPAScaleConstraintValue) *autoscalingv2.HPAScaleConstraintValue {
+func copyHPAConstraint(from, to *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	if from == nil {
 		return to
 	}
-	if from.DelaySeconds != nil {
-		to.DelaySeconds = from.DelaySeconds
-	}
-	if from.Rate != nil {
-		if from.Rate.Pods != nil {
-			to.Rate.Pods = from.Rate.Pods
-		}
-		if from.Rate.Percent != nil {
-			to.Rate.Percent = from.Rate.Percent
-		}
-		if from.Rate.PeriodSeconds != nil {
-			to.Rate.PeriodSeconds = from.Rate.PeriodSeconds
-		}
+	if from.Policies != nil {
+		to.Policies = from.Policies
 	}
 	return to
 }
@@ -882,8 +940,7 @@ func (a *HorizontalController) convertDesiredReplicasWithConstraintRate(args Nor
 	var possibleLimitingReason, possibleLimitingMessage string
 
 	if args.DesiredReplicas > args.CurrentReplicas {
-		replicasAddedInCurrentPeriod := getReplicasChangePerPeriod(*args.ScaleUpConstraint.Rate.PeriodSeconds, a.scaleUpEvents[args.Key])
-		scaleUpLimit := calculateScaleUpLimit(args.CurrentReplicas, replicasAddedInCurrentPeriod, *args.ScaleUpConstraint.Rate)
+		scaleUpLimit := calculateScaleUpLimitWithConstraints(args.CurrentReplicas, a.scaleUpEvents[args.Key], args.ScaleUpConstraint)
 		if scaleUpLimit < args.CurrentReplicas {
 			// We scaled up a lot during rate.PeriodSeconds, but then we changed the rate.Pods
 			// We shouldn't scale up further until the scaleUpEvents will be cleaned up
@@ -902,15 +959,14 @@ func (a *HorizontalController) convertDesiredReplicasWithConstraintRate(args Nor
 			return maximumAllowedReplicas, possibleLimitingReason, possibleLimitingMessage
 		}
 	} else if args.DesiredReplicas < args.CurrentReplicas {
-		replicasDeletedInCurrentPeriod := getReplicasChangePerPeriod(*args.ScaleDownConstraint.Rate.PeriodSeconds, a.scaleDownEvents[args.Key])
-		scaleDownLimit := calculateScaleDownLimit(args.CurrentReplicas, replicasDeletedInCurrentPeriod, *args.ScaleDownConstraint.Rate)
+		scaleDownLimit := calculateScaleDownLimitWithConstraints(args.CurrentReplicas, a.scaleDownEvents[args.Key], *args.ScaleDownConstraint)
 		if scaleDownLimit > args.CurrentReplicas {
 			// We scaled down a lot during rate.PeriodSeconds, but then we changed the rate.Pods
 			// We shouldn't scale down further until the scaleDownEvents will be cleaned up
 			scaleDownLimit = args.CurrentReplicas
 		}
 		var minimumAllowedReplicas int32
-		if args.MinReplicas != nil && *args.MinReplicas != 0 {
+		if args.MinReplicas != nil {
 			minimumAllowedReplicas = *args.MinReplicas
 			possibleLimitingMessage = "the desired replica count is less than the minimum replica count"
 			possibleLimitingReason = "TooFewReplicas"
@@ -933,39 +989,90 @@ func (a *HorizontalController) convertDesiredReplicasWithConstraintRate(args Nor
 
 }
 
+// convertDesiredReplicas performs the actual normalization, without depending on `HorizontalController` or `HorizontalPodAutoscaler`
+func convertDesiredReplicasWithRules(currentReplicas, desiredReplicas, hpaMinReplicas, hpaMaxReplicas int32) (int32, string, string) {
+
+	var minimumAllowedReplicas int32
+	var maximumAllowedReplicas int32
+
+	var possibleLimitingCondition string
+	var possibleLimitingReason string
+
+	minimumAllowedReplicas = hpaMinReplicas
+	possibleLimitingReason = "the desired replica count is less than the minimum replica count"
+
+	// Do not upscale too much to prevent incorrect rapid increase of the number of master replicas caused by
+	// bogus CPU usage report from heapster/kubelet (like in issue #32304).
+	scaleUpLimit := calculateScaleUpLimit(currentReplicas)
+
+	if hpaMaxReplicas > scaleUpLimit {
+		maximumAllowedReplicas = scaleUpLimit
+
+		possibleLimitingCondition = "ScaleUpLimit"
+		possibleLimitingReason = "the desired replica count is increasing faster than the maximum scale rate"
+	} else {
+		maximumAllowedReplicas = hpaMaxReplicas
+		possibleLimitingCondition = "TooManyReplicas"
+		possibleLimitingReason = "the desired replica count is more than the maximum replica count"
+	}
+
+	if desiredReplicas < minimumAllowedReplicas {
+		possibleLimitingCondition = "TooFewReplicas"
+		possibleLimitingReason = "the desired replica count is less than the minimum replica count"
+
+		return minimumAllowedReplicas, possibleLimitingCondition, possibleLimitingReason
+	} else if desiredReplicas > maximumAllowedReplicas {
+		return maximumAllowedReplicas, possibleLimitingCondition, possibleLimitingReason
+	}
+
+	return desiredReplicas, "DesiredWithinRange", "the desired count is within the acceptable range"
+}
+
+func calculateScaleUpLimit(currentReplicas int32) int32 {
+	return int32(math.Max(scaleUpLimitFactor*float64(currentReplicas), scaleUpLimitMinimum))
+}
+
 // calculateScaleUpLimit returns the maximum number of pods that could be added given the constraint.Rate
 // For scaling up both rate.Pods and rate.Percent are always defined
 // If the user doesn't specify them, the default values are used instead
 // Check defaultHPAScaleUpConstraintValue for default values
-func calculateScaleUpLimit(currentReplicas int32, replicasAddedInCurrentPeriod int32, hpaRate autoscalingv2.HPAScaleConstraintRateValue) int32 {
-	periodStartReplicas := currentReplicas - replicasAddedInCurrentPeriod
-
-	absolute := int32(periodStartReplicas + *hpaRate.Pods)
-	relative := int32(float64(periodStartReplicas) * (1 + float64(*hpaRate.Percent)/100))
-
-	return max(absolute, relative)
+func calculateScaleUpLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, hpaRate *autoscalingv2.HPAScalingDirectionBehavior) int32 {
+	var max int32 = 0
+	var proposed int32
+	for _, policy := range hpaRate.Policies {
+		replicasAddedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
+		periodStartReplicas := currentReplicas - replicasAddedInCurrentPeriod
+		if policy.Type == autoscalingv2.PodsScalingPolicy {
+			proposed = int32(periodStartReplicas + policy.Value)
+		} else if policy.Type == autoscalingv2.PercentScalingPolicy {
+			proposed = int32(float64(periodStartReplicas) * (1 + float64(policy.Value)/100))
+		}
+		if proposed > max {
+			max = proposed
+		}
+	}
+	return max
 }
 
 // calculateScaleDownLimit returns the maximum number of pods that could be deleted for the given rate
 // For scaling down both rate.Pods and rate.Percent could be nil, it means that we allow to remove all the pods
 // Check defaultHPAScaleDownConstraintValue for default values
-func calculateScaleDownLimit(currentReplicas int32, replicasDeletedInCurrentPeriod int32, hpaRate autoscalingv2.HPAScaleConstraintRateValue) int32 {
-	var absolute, relative int32
-	periodStartReplicas := currentReplicas + replicasDeletedInCurrentPeriod
-	if hpaRate.Pods == nil {
-		absolute = 0
-	} else {
-		absolute = periodStartReplicas - *hpaRate.Pods
-	}
-	if hpaRate.Percent == nil {
-		relative = 0
-	} else {
-		relative = int32(float64(periodStartReplicas) * (1 - float64(*hpaRate.Percent)/100))
-		if relative < 0 {
-			relative = 0
+func calculateScaleDownLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, hpaRate autoscalingv2.HPAScalingDirectionBehavior) int32 {
+	var min int32 = math.MaxInt32
+	var proposed int32
+	for _, policy := range hpaRate.Policies {
+		replicasDeletedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
+		periodStartReplicas := currentReplicas + replicasDeletedInCurrentPeriod
+		if policy.Type == autoscalingv2.PodsScalingPolicy {
+			proposed = periodStartReplicas - policy.Value
+		} else if policy.Type == autoscalingv2.PercentScalingPolicy {
+			proposed = int32(float64(periodStartReplicas) * (1 - float64(policy.Value)/100))
+		}
+		if proposed < min {
+			min = proposed
 		}
 	}
-	return max(absolute, relative)
+	return min
 }
 
 // scaleForResourceMappings attempts to fetch the scale for the

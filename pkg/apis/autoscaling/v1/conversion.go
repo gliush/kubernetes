@@ -323,7 +323,7 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v1_HorizontalPodAutoscaler(i
 		}
 	}
 
-	if len(otherMetrics) > 0 || len(in.Status.CurrentMetrics) > 0 || len(currentConditions) > 0 || in.Spec.Constraints != nil {
+	if len(otherMetrics) > 0 || len(in.Status.CurrentMetrics) > 0 || len(currentConditions) > 0 || in.Spec.Behavior != nil {
 		old := out.Annotations
 		out.Annotations = make(map[string]string, len(old)+4)
 		for k, v := range old {
@@ -347,12 +347,12 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v1_HorizontalPodAutoscaler(i
 		out.Annotations[autoscaling.MetricStatusesAnnotation] = string(currentMetricsEnc)
 	}
 
-	if in.Spec.Constraints != nil {
-		constraintsEnc, err := json.Marshal(in.Spec.Constraints)
+	if in.Spec.Behavior != nil {
+		behaviorEnc, err := json.Marshal(in.Spec.Behavior)
 		if err != nil {
 			return err
 		}
-		out.Annotations[autoscaling.ConstraintSpecsAnnotation] = string(constraintsEnc)
+		out.Annotations[autoscaling.BehaviorSpecsAnnotation] = string(behaviorEnc)
 	}
 
 	if len(in.Status.Conditions) > 0 {
@@ -391,13 +391,13 @@ func Convert_v1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutoscaler(i
 		delete(out.Annotations, autoscaling.MetricSpecsAnnotation)
 	}
 
-	if constraintsEnc, hasConstraints := out.Annotations[autoscaling.ConstraintSpecsAnnotation]; hasConstraints {
-		var constraints autoscaling.HPAScaleConstraints
-		if err := json.Unmarshal([]byte(constraintsEnc), &constraints); err != nil {
+	if behaviorEnc, hasConstraints := out.Annotations[autoscaling.BehaviorSpecsAnnotation]; hasConstraints {
+		var behavior autoscaling.HPAScalingBehavior
+		if err := json.Unmarshal([]byte(behaviorEnc), &behavior); err != nil {
 			return err
 		}
-		out.Spec.Constraints = &constraints
-		delete(out.Annotations, autoscaling.ConstraintSpecsAnnotation)
+		out.Spec.Behavior = &behavior
+		delete(out.Annotations, autoscaling.BehaviorSpecsAnnotation)
 	}
 
 	if currentMetricsEnc, hasCurrentMetrics := out.Annotations[autoscaling.MetricStatusesAnnotation]; hasCurrentMetrics {

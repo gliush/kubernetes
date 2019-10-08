@@ -33,6 +33,6 @@ const HorizontalPodAutoscalerConditionsAnnotation = "autoscaling.alpha.kubernete
 // logic, and the pseudo-defaulting done in v1 conversion.
 const DefaultCPUUtilization = 80
 
-// ConstraintSpecsAnnotation is the annotation which holds the HPA constraints specs
-// when converting the `Constraints` field from autoscaling/v2beta2
-const ConstraintSpecsAnnotation = "autoscaling.alpha.kubernetes.io/constraints"
+// BehaviorSpecsAnnotation is the annotation which holds the HPA constraints specs
+// when converting the `Behavior` field from autoscaling/v2beta2
+const BehaviorSpecsAnnotation = "autoscaling.alpha.kubernetes.io/behavior"

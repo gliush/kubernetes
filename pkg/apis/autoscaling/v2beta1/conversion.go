@@ -299,7 +299,7 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutosca
 	if err := autoConvert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutoscaler(in, out, s); err != nil {
 		return err
 	}
-	if in.Spec.Constraints != nil {
+	if in.Spec.Behavior != nil {
 		old := out.Annotations
 		out.Annotations = make(map[string]string, len(old)+1)
 		for k, v := range old {
@@ -307,12 +307,12 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutosca
 		}
 	}
 
-	if in.Spec.Constraints != nil {
-		constraintsEnc, err := json.Marshal(in.Spec.Constraints)
+	if in.Spec.Behavior != nil {
+		behaviorEnc, err := json.Marshal(in.Spec.Behavior)
 		if err != nil {
 			return err
 		}
-		out.Annotations[autoscaling.ConstraintSpecsAnnotation] = string(constraintsEnc)
+		out.Annotations[autoscaling.BehaviorSpecsAnnotation] = string(behaviorEnc)
 	}
 
 	return nil
@@ -323,13 +323,13 @@ func Convert_v2beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutosca
 		return err
 	}
 
-	if constraintsEnc, hasConstraints := out.Annotations[autoscaling.ConstraintSpecsAnnotation]; hasConstraints {
-		var constraints autoscaling.HPAScaleConstraints
-		if err := json.Unmarshal([]byte(constraintsEnc), &constraints); err != nil {
+	if behaviorEnc, hasConstraints := out.Annotations[autoscaling.BehaviorSpecsAnnotation]; hasConstraints {
+		var behavior autoscaling.HPAScalingBehavior
+		if err := json.Unmarshal([]byte(behaviorEnc), &behavior); err != nil {
 			return err
 		}
-		out.Spec.Constraints = &constraints
-		delete(out.Annotations, autoscaling.ConstraintSpecsAnnotation)
+		out.Spec.Behavior = &behavior
+		delete(out.Annotations, autoscaling.BehaviorSpecsAnnotation)
 	}
 	return nil
 }

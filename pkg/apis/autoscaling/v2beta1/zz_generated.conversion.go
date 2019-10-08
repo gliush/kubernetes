@@ -493,7 +493,7 @@ func autoConvert_autoscaling_HorizontalPodAutoscalerSpec_To_v2beta1_HorizontalPo
 	} else {
 		out.Metrics = nil
 	}
-	// WARNING: in.Constraints requires manual conversion: does not exist in peer-type
+	// WARNING: in.Behavior requires manual conversion: does not exist in peer-type
 	return nil
 }
 
