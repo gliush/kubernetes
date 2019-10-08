@@ -59,10 +59,9 @@ func (ExternalMetricStatus) SwaggerDoc() map[string]string {
 }
 
 var map_HPAScalingBehavior = map[string]string{
-	"":                           "HPAScalingBehavior configures a scaling behavior for Up and Down direction (scaleUp and scaleDown fields respectively)",
-	"stabilizationWindowSeconds": "StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while scaling down",
-	"scaleUp":                    "constraint value for scaling Up",
-	"scaleDown":                  "constraint value for scaling Down",
+	"":          "HPAScalingBehavior configures a scaling behavior for Up and Down direction (scaleUp and scaleDown fields respectively)",
+	"scaleUp":   "constraint value for scaling Up",
+	"scaleDown": "constraint value for scaling Down",
 }
 
 func (HPAScalingBehavior) SwaggerDoc() map[string]string {
@@ -70,9 +69,10 @@ func (HPAScalingBehavior) SwaggerDoc() map[string]string {
 }
 
 var map_HPAScalingDirectionBehavior = map[string]string{
-	"":             "HPAScalingDirectionBehavior configures the scaling policy and the policy selector",
-	"selectPolicy": "SelectPolicy is used to specify which policy should be used",
-	"policies":     "Policies is a list of potential scaling polices which can used during scaling",
+	"":                           "HPAScalingDirectionBehavior configures the scaling policy and the policy selector",
+	"stabilizationWindowSeconds": "StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while scaling up or scaling down",
+	"selectPolicy":               "SelectPolicy is used to specify which policy should be used",
+	"policies":                   "Policies is a list of potential scaling polices which can used during scaling",
 }
 
 func (HPAScalingDirectionBehavior) SwaggerDoc() map[string]string {
