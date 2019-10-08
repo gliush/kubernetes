@@ -138,34 +138,55 @@
           }
         }
       }
-    ]
+    ],
+    "constraints": {
+      "scaleUp": {
+        "rate": {
+          "pods": 994072122,
+          "percent": 1260448044,
+          "periodSeconds": 1701999128
+        },
+        "delaySeconds": 1160477220
+      },
+      "scaleDown": {
+        "rate": {
+          "pods": -1798849477,
+          "percent": -1981710234,
+          "periodSeconds": -1252938503
+        },
+        "delaySeconds": 965937684
+      }
+    }
   },
   "status": {
-    "observedGeneration": -6706242512760583856,
-    "currentReplicas": 1761963371,
-    "desiredReplicas": 645599318,
+    "observedGeneration": -1190532876243563064,
+    "currentReplicas": 1853396726,
+    "desiredReplicas": 1330271338,
     "currentMetrics": [
       {
-        "type": "矀Kʝ瘴I\\p[ħsĨɆâĺɗŹ倗S",
+        "type": "Ɔȓ蹣ɐǛv+8Ƥ熪",
         "object": {
           "metric": {
             "name": "46",
             "selector": {
               "matchLabels": {
-                "990-17-hg1-o-p665--4-j8---t6-r7---d--uml-89.n0v-1o-0hv--k6/0_OHz_.B-.-_w_--.8_r_N-.3n-x.-_-_-Nm-_X3.1d_YH3x---5": "s2oy"
+                "e1Vx8_I-f": "56-__18Y--6-_3J--.48Y.q.0-_1-F.h-__k_K9"
               },
               "matchExpressions": [
                 {
-                  "key": "rR4_7FA.2",
-                  "operator": "DoesNotExist"
+                  "key": "t--fv--m-8--72-b4/o90G_A4..-L..-__0N_N.3",
+                  "operator": "NotIn",
+                  "values": [
+                    "m.6--3-___t-Z8SUGP.-_.uB-.--.gb_2_-8-----yJY.__-X_.8xN._-_-vvQ"
+                  ]
                 }
               ]
             }
           },
           "current": {
-            "value": "861",
-            "averageValue": "289",
-            "averageUtilization": 1980459939
+            "value": "957",
+            "averageValue": "372",
+            "averageUtilization": 1658749995
           },
           "describedObject": {
             "kind": "53",
@@ -178,31 +199,28 @@
             "name": "56",
             "selector": {
               "matchLabels": {
-                "7-gg93--5-------g1c-fr4/mQ.GM72_-c-.-.6--3-___t-Z8SUGP.-_.uB-.--.gb_2_-8-----yJY.__-X2": "0_.GgT7_7B_D-..-.k4u-zA_--_.-.6GA26C-s.Nj-d-E"
+                "1q5--uk5mj-94-8134i5k6q6--5tu-tie4-7--gm4p-83.91z---883d-vj/2...-h._.GgT7_7B_D-..-.k4u-zA_--_.-.6GA26C-s.Nj-d-4_4--.-_Z4.A": "R_rO-S-P_-...0c.-.p_3_J_SA995IKCR.s-f"
               },
               "matchExpressions": [
                 {
-                  "key": "1q5--uk5mj-94-8134i5k6q6--5tu-tie4-7--gm4p-83.91z---883d-vj/z.-_Z4.A",
-                  "operator": "NotIn",
-                  "values": [
-                    "G.-_pP__up.2L_s-o779._-k-5___-Qq..csh-3--Z1Tvw39F_C-t"
-                  ]
+                  "key": "5-.-.T-V_D_p",
+                  "operator": "DoesNotExist"
                 }
               ]
             }
           },
           "current": {
-            "value": "485",
-            "averageValue": "638",
-            "averageUtilization": 1333166203
+            "value": "896",
+            "averageValue": "493",
+            "averageUtilization": 1856699480
           }
         },
         "resource": {
-          "name": "ɻ;襕ċ桉桃喕",
+          "name": "Ů\u003cy鯶縆łƑ[澔",
           "current": {
-            "value": "826",
-            "averageValue": "886",
-            "averageUtilization": -280562323
+            "value": "316",
+            "averageValue": "884",
+            "averageUtilization": 1288391156
           }
         },
         "external": {
@@ -210,31 +228,34 @@
             "name": "63",
             "selector": {
               "matchLabels": {
-                "Z": "C..7o_x3..-.8-Jp-9-4-Tm.__G-8...__.Q_c8.G.b_91"
+                "2-tfh4.caTz_.g.w-o.8_WT-M.3_-1y_8D_X._B_p": "p--_H-.___._D8.TS-jJ.Ys_Mop34_-y.H"
               },
               "matchExpressions": [
                 {
-                  "key": "7pdn--j2---25/I._31-_I-A-_3b6",
-                  "operator": "Exists"
+                  "key": "4.B.__6m",
+                  "operator": "In",
+                  "values": [
+                    "3-s.H.Hu-k-_-0-T1mel--F......3_t_-l..-.DG7r-3.----._4__Xn"
+                  ]
                 }
               ]
             }
           },
           "current": {
-            "value": "108",
-            "averageValue": "909",
-            "averageUtilization": -1726456869
+            "value": "428",
+            "averageValue": "901",
+            "averageUtilization": 1760208172
           }
         }
       }
     ],
     "conditions": [
       {
-        "type": "Ƚȿ醏g遧",
-        "status": "ɸĻo:{柯?B俋¬h`職铳s44矕Ƈ",
-        "lastTransitionTime": "2039-12-25T06:58:01Z",
-        "reason": "70",
-        "message": "71"
+        "type": "-觗裓6Ř筿ɾ5Ų買霎ȃň[\u003eą",
+        "status": "ĖRh}颉hȱɷȰW瀤oɢ嫎¸殚篎",
+        "lastTransitionTime": "2537-04-05T18:25:51Z",
+        "reason": "75",
+        "message": "76"
       }
     ]
   }

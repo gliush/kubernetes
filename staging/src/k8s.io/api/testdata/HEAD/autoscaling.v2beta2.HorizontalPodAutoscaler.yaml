@@ -30,7 +30,20 @@ metadata:
   selfLink: "5"
   uid: "7"
 spec:
-  maxReplicas: -1971381490
+  constraints:
+    scaleDown:
+      delaySeconds: 965937684
+      rate:
+        percent: -1981710234
+        periodSeconds: -1252938503
+        pods: -1798849477
+    scaleUp:
+      delaySeconds: 1160477220
+      rate:
+        percent: 1260448044
+        periodSeconds: 1701999128
+        pods: 994072122
+  maxReplicas: 2114329341
   metrics:
   - external:
       metric:
@@ -97,30 +110,32 @@ spec:
     name: "20"
 status:
   conditions:
-  - lastTransitionTime: "2039-12-25T06:58:01Z"
-    message: "71"
-    reason: "70"
-    status: ɸĻo:{柯?B俋¬h`職铳s44矕Ƈ
-    type: Ƚȿ醏g遧
+  - lastTransitionTime: "2537-04-05T18:25:51Z"
+    message: "76"
+    reason: "75"
+    status: ĖRh}颉hȱɷȰW瀤oɢ嫎¸殚篎
+    type: -觗裓6Ř筿ɾ5Ų買霎ȃň[>ą
   currentMetrics:
   - external:
       current:
-        averageUtilization: -1726456869
-        averageValue: "909"
-        value: "108"
+        averageUtilization: 1760208172
+        averageValue: "901"
+        value: "428"
       metric:
         name: "63"
         selector:
           matchExpressions:
-          - key: 7pdn--j2---25/I._31-_I-A-_3b6
-            operator: Exists
+          - key: 4.B.__6m
+            operator: In
+            values:
+            - 3-s.H.Hu-k-_-0-T1mel--F......3_t_-l..-.DG7r-3.----._4__Xn
           matchLabels:
-            Z: C..7o_x3..-.8-Jp-9-4-Tm.__G-8...__.Q_c8.G.b_91
+            2-tfh4.caTz_.g.w-o.8_WT-M.3_-1y_8D_X._B_p: p--_H-.___._D8.TS-jJ.Ys_Mop34_-y.H
     object:
       current:
-        averageUtilization: 1980459939
-        averageValue: "289"
-        value: "861"
+        averageUtilization: 1658749995
+        averageValue: "372"
+        value: "957"
       describedObject:
         apiVersion: "55"
         kind: "53"
@@ -129,32 +144,32 @@ status:
         name: "46"
         selector:
           matchExpressions:
-          - key: rR4_7FA.2
-            operator: DoesNotExist
+          - key: t--fv--m-8--72-b4/o90G_A4..-L..-__0N_N.3
+            operator: NotIn
+            values:
+            - m.6--3-___t-Z8SUGP.-_.uB-.--.gb_2_-8-----yJY.__-X_.8xN._-_-vvQ
           matchLabels:
-            990-17-hg1-o-p665--4-j8---t6-r7---d--uml-89.n0v-1o-0hv--k6/0_OHz_.B-.-_w_--.8_r_N-.3n-x.-_-_-Nm-_X3.1d_YH3x---5: s2oy
+            e1Vx8_I-f: 56-__18Y--6-_3J--.48Y.q.0-_1-F.h-__k_K9
     pods:
       current:
-        averageUtilization: 1333166203
-        averageValue: "638"
-        value: "485"
+        averageUtilization: 1856699480
+        averageValue: "493"
+        value: "896"
       metric:
         name: "56"
         selector:
           matchExpressions:
-          - key: 1q5--uk5mj-94-8134i5k6q6--5tu-tie4-7--gm4p-83.91z---883d-vj/z.-_Z4.A
-            operator: NotIn
-            values:
-            - G.-_pP__up.2L_s-o779._-k-5___-Qq..csh-3--Z1Tvw39F_C-t
+          - key: 5-.-.T-V_D_p
+            operator: DoesNotExist
           matchLabels:
-            7-gg93--5-------g1c-fr4/mQ.GM72_-c-.-.6--3-___t-Z8SUGP.-_.uB-.--.gb_2_-8-----yJY.__-X2: 0_.GgT7_7B_D-..-.k4u-zA_--_.-.6GA26C-s.Nj-d-E
+            1q5--uk5mj-94-8134i5k6q6--5tu-tie4-7--gm4p-83.91z---883d-vj/2...-h._.GgT7_7B_D-..-.k4u-zA_--_.-.6GA26C-s.Nj-d-4_4--.-_Z4.A: R_rO-S-P_-...0c.-.p_3_J_SA995IKCR.s-f
     resource:
       current:
-        averageUtilization: -280562323
-        averageValue: "886"
-        value: "826"
-      name: ɻ;襕ċ桉桃喕
-    type: 矀Kʝ瘴I\p[ħsĨɆâĺɗŹ倗S
-  currentReplicas: 1761963371
-  desiredReplicas: 645599318
-  observedGeneration: -6706242512760583856
+        averageUtilization: 1288391156
+        averageValue: "884"
+        value: "316"
+      name: Ů<y鯶縆łƑ[澔
+    type: Ɔȓ蹣ɐǛv+8Ƥ熪
+  currentReplicas: 1853396726
+  desiredReplicas: 1330271338
+  observedGeneration: -1190532876243563064

@@ -29,7 +29,7 @@ import (
 
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2beta1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -498,7 +498,6 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 	})
 
 	informerFactory := informers.NewSharedInformerFactory(testClient, controller.NoResyncPeriodFunc())
-	defaultDownscaleStabilisationWindow := 5 * time.Minute
 
 	hpaController := NewHorizontalController(
 		eventClient.CoreV1(),
@@ -508,8 +507,7 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 		metricsClient,
 		informerFactory.Autoscaling().V1().HorizontalPodAutoscalers(),
 		informerFactory.Core().V1().Pods(),
-		controller.NoResyncPeriodFunc(),
-		defaultDownscaleStabilisationWindow,
+		controller.StaticResyncPeriodFunc(defaultTestResyncPeriod)(),
 		defaultTestingTolerance,
 		defaultTestingCpuInitializationPeriod,
 		defaultTestingDelayOfInitialReadinessStatus,
