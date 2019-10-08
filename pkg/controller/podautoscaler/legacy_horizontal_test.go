@@ -498,6 +498,7 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 	})
 
 	informerFactory := informers.NewSharedInformerFactory(testClient, controller.NoResyncPeriodFunc())
+	defaultDownscaleStabilisationWindow := 5 * time.Minute
 
 	hpaController := NewHorizontalController(
 		eventClient.CoreV1(),
@@ -507,7 +508,8 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 		metricsClient,
 		informerFactory.Autoscaling().V1().HorizontalPodAutoscalers(),
 		informerFactory.Core().V1().Pods(),
-		controller.StaticResyncPeriodFunc(defaultTestResyncPeriod)(),
+		controller.NoResyncPeriodFunc(),
+		defaultDownscaleStabilisationWindow,
 		defaultTestingTolerance,
 		defaultTestingCpuInitializationPeriod,
 		defaultTestingDelayOfInitialReadinessStatus,
