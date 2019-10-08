@@ -123,10 +123,6 @@ type MetricSpec struct {
 // HPAScalingBehavior configures a scaling behavior for Up and Down direction
 // (scaleUp and scaleDown fields respectively)
 type HPAScalingBehavior struct {
-	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
-	// scaling down
-	// +optional
-	StabilizationWindowSeconds *int32 `json:"stabilizationWindowSeconds" protobuf:"varint,3,opt,name=stabilizationWindowSeconds"`
 	// constraint value for scaling Up
 	// +optional
 	ScaleUp *HPAScalingDirectionBehavior `json:"scaleUp,omitempty" protobuf:"bytes,1,opt,name=scaleUp"`
@@ -146,6 +142,10 @@ const (
 
 // HPAScalingDirectionBehavior configures the scaling policy and the policy selector
 type HPAScalingDirectionBehavior struct {
+	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
+	// scaling up or scaling down
+	// +optional
+	StabilizationWindowSeconds *int32 `json:"stabilizationWindowSeconds" protobuf:"varint,3,opt,name=stabilizationWindowSeconds"`
 	// SelectPolicy is used to specify which policy should be used
 	// +optional
 	SelectPolicy *ScalingPolicySelect `json:"selectPolicy,omitempty" protobuf:"bytes,1,opt,name=selectPolicy"`

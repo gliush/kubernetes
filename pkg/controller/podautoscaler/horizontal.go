@@ -60,7 +60,8 @@ var (
 	scaleUpDelaySeconds              int32
 	maxPolicy                        = autoscalingv2.MaxPolicySelect
 	defaultHPAScaleUpConstraintValue = autoscalingv2.HPAScalingDirectionBehavior{
-		SelectPolicy: &maxPolicy,
+		StabilizationWindowSeconds: &scaleUpDelaySeconds,
+		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
 			{
 				Type:          autoscalingv2.PodsScalingPolicy,
@@ -77,7 +78,8 @@ var (
 	scaleDownPeriod                    int32 = 60
 	scaleDownDelaySeconds              int32 = 300
 	defaultHPAScaleDownConstraintValue       = autoscalingv2.HPAScalingDirectionBehavior{
-		SelectPolicy: &maxPolicy,
+		StabilizationWindowSeconds: &scaleDownDelaySeconds,
+		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
 			{
 				Type:          autoscalingv2.PercentScalingPolicy,
@@ -749,14 +751,13 @@ func (a *HorizontalController) normalizeDesiredReplicas(hpa *autoscalingv2.Horiz
 }
 
 type NormalizationArg struct {
-	Key                        string
-	StabilizationWindowSeconds int32
-	ScaleUpConstraint          *autoscalingv2.HPAScalingDirectionBehavior
-	ScaleDownConstraint        *autoscalingv2.HPAScalingDirectionBehavior
-	MinReplicas                *int32
-	MaxReplicas                int32
-	CurrentReplicas            int32
-	DesiredReplicas            int32
+	Key                 string
+	ScaleUpConstraint   *autoscalingv2.HPAScalingDirectionBehavior
+	ScaleDownConstraint *autoscalingv2.HPAScalingDirectionBehavior
+	MinReplicas         *int32
+	MaxReplicas         int32
+	CurrentReplicas     int32
+	DesiredReplicas     int32
 }
 
 // normalizeDesiredReplicasWithConstraints takes the metrics desired replicas value and normalizes it:
@@ -869,18 +870,18 @@ func (a *HorizontalController) stabilizeRecommendationWithConstraints(args Norma
 	var betterRecommendation func(int32, int32) int32
 
 	if args.DesiredReplicas >= args.CurrentReplicas {
-		scaleDelaySeconds = args.StabilizationWindowSeconds
+		scaleDelaySeconds = *args.ScaleUpConstraint.StabilizationWindowSeconds
 		betterRecommendation = min
 		reason = "ScaleUpStabilized"
 		message = "recent recommendations were lower than current one, applying the lowest recent recommendation"
 	} else {
-		scaleDelaySeconds = args.StabilizationWindowSeconds
+		scaleDelaySeconds = *args.ScaleDownConstraint.StabilizationWindowSeconds
 		betterRecommendation = max
 		reason = "ScaleDownStabilized"
 		message = "recent recommendations were higher than current one, applying the highest recent recommendation"
 	}
 
-	maxDelaySeconds := args.StabilizationWindowSeconds
+	maxDelaySeconds := max(*args.ScaleUpConstraint.StabilizationWindowSeconds, *args.ScaleDownConstraint.StabilizationWindowSeconds)
 	obsoleteCutoff := time.Now().Add(-time.Second * time.Duration(maxDelaySeconds))
 
 	cutoff := time.Now().Add(-time.Second * time.Duration(scaleDelaySeconds))
@@ -927,6 +928,12 @@ func generateHPAScaleDownConstraint(hpaConstraints *autoscalingv2.HPAScalingDire
 func copyHPAConstraint(from, to *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	if from == nil {
 		return to
+	}
+	if from.SelectPolicy != nil {
+		to.SelectPolicy = from.SelectPolicy
+	}
+	if from.StabilizationWindowSeconds != nil {
+		to.StabilizationWindowSeconds = from.StabilizationWindowSeconds
 	}
 	if from.Policies != nil {
 		to.Policies = from.Policies
