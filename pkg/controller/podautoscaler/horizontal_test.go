@@ -2164,7 +2164,7 @@ func TestUpscaleCap(t *testing.T) {
 		maxReplicas:             100,
 		specReplicas:            3,
 		statusReplicas:          3,
-		scaleUpConstraint:       &autoscalingv2.HPAScalingDirectionBehavior{Policies: []autoscalingv2.HPAScalingPolicy{{Type: autoscalingv2.PercentScalingPolicy, Value: 700}}},
+		scaleUpConstraint:       generateConstraint(nil, createInt32Pointer(700), nil),
 		initialReplicas:         3,
 		expectedDesiredReplicas: 24,
 		CPUTarget:               10,
@@ -2186,7 +2186,7 @@ func TestUpscaleCapGreaterThanMaxReplicas(t *testing.T) {
 		maxReplicas:       20,
 		specReplicas:      3,
 		statusReplicas:    3,
-		scaleUpConstraint: &autoscalingv2.HPAScalingDirectionBehavior{Policies: []autoscalingv2.HPAScalingPolicy{{Type: autoscalingv2.PercentScalingPolicy, Value: 700}}},
+		scaleUpConstraint: generateConstraint(nil, createInt32Pointer(700), nil),
 		initialReplicas:   3,
 		// expectedDesiredReplicas would be 24 without maxReplicas
 		expectedDesiredReplicas: 20,
@@ -3014,17 +3014,14 @@ func createInt32Pointer(x int32) *int32 {
 }
 
 func generateConstraint(pods, percent, period *int32) *autoscalingv2.HPAScalingDirectionBehavior {
-	if period == nil {
-		period = createInt32Pointer(60)
-	}
 	directionBehavior := autoscalingv2.HPAScalingDirectionBehavior{}
 	if pods != nil {
 		directionBehavior.Policies = append(directionBehavior.Policies,
-			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PodsScalingPolicy, Value: *pods, PeriodSeconds: *period})
+			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PodsScalingPolicy, Value: pods, PeriodSeconds: period})
 	}
 	if percent != nil {
 		directionBehavior.Policies = append(directionBehavior.Policies,
-			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PercentScalingPolicy, Value: *percent, PeriodSeconds: *period})
+			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PercentScalingPolicy, Value: percent, PeriodSeconds: period})
 	}
 	return &directionBehavior
 }
@@ -3241,6 +3238,7 @@ func TestScaleRate(t *testing.T) {
 			specMaxReplicas:              1000,
 			rateDownPods:                 createInt32Pointer(20),
 			rateDownPercent:              createInt32Pointer(1),
+			rateDownPeriodSeconds:        createInt32Pointer(60),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             80,
@@ -3251,6 +3249,7 @@ func TestScaleRate(t *testing.T) {
 			specMaxReplicas:              1000,
 			rateDownPods:                 createInt32Pointer(2),
 			rateDownPercent:              createInt32Pointer(1),
+			rateDownPeriodSeconds:        createInt32Pointer(60),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             98,
@@ -3260,6 +3259,7 @@ func TestScaleRate(t *testing.T) {
 			specMinReplicas:              nil,
 			specMaxReplicas:              1000,
 			rateDownPods:                 createInt32Pointer(100),
+			rateDownPeriodSeconds:        createInt32Pointer(60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3269,6 +3269,7 @@ func TestScaleRate(t *testing.T) {
 			specMinReplicas:              createInt32Pointer(1),
 			specMaxReplicas:              1000,
 			rateDownPods:                 createInt32Pointer(100),
+			rateDownPeriodSeconds:        createInt32Pointer(60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3287,6 +3288,8 @@ func TestScaleRate(t *testing.T) {
 			specMinReplicas:              nil,
 			specMaxReplicas:              1000,
 			rateDownPods:                 createInt32Pointer(5),
+			rateDownPeriodSeconds:        createInt32Pointer(60),
+			rateDownPercent:              createInt32Pointer(0), // otherwise, the default value 100% is used
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3387,6 +3390,7 @@ func TestScaleRate(t *testing.T) {
 			specMaxReplicas:              1000,
 			rateDownPeriodSeconds:        createInt32Pointer(120),
 			rateDownPods:                 createInt32Pointer(115),
+			rateDownPercent:              createInt32Pointer(0), // otherwise, the default value 100% is used
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3398,6 +3402,7 @@ func TestScaleRate(t *testing.T) {
 			specMaxReplicas:              1000,
 			rateDownPeriodSeconds:        createInt32Pointer(120),
 			rateDownPods:                 createInt32Pointer(130),
+			rateDownPercent:              createInt32Pointer(0), // otherwise, the default value 100% is used
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             5,
@@ -3420,6 +3425,7 @@ func TestScaleRate(t *testing.T) {
 			specMaxReplicas:              1000,
 			rateDownPeriodSeconds:        createInt32Pointer(120),
 			rateDownPods:                 createInt32Pointer(5),
+			rateDownPercent:              createInt32Pointer(0), // otherwise, the default value 100% is used
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             100, // 100 + 15 - 5
@@ -3500,120 +3506,243 @@ func TestScaleRate(t *testing.T) {
 
 func TestGenerateScaleUpConstraint(t *testing.T) {
 	type TestCase struct {
-		rateUpPods          *int32
-		rateUpPercent       *int32
-		rateUpPeriodSeconds *int32
-		expectedPolicies    []autoscalingv2.HPAScalingPolicy
-		annotation          string
-	}
-	tests := []TestCase{
-		{
-			annotation: "Default values",
-			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 4, PeriodSeconds: 60},
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 60},
-			},
-		},
-		{
-			annotation:          "Percent and Pods are defined",
-			rateUpPods:          createInt32Pointer(6),
-			rateUpPeriodSeconds: createInt32Pointer(120),
-			rateUpPercent:       createInt32Pointer(200),
-			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 6, PeriodSeconds: 120},
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 200, PeriodSeconds: 120},
-			},
-		},
-		{
-			annotation:          "Only pod policy specified",
-			rateUpPods:          createInt32Pointer(6),
-			rateUpPeriodSeconds: createInt32Pointer(8),
-			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 6, PeriodSeconds: 8},
-			},
-		},
-		{
-			annotation:          "Only percent policy specified",
-			rateUpPercent:       createInt32Pointer(7),
-			rateUpPeriodSeconds: createInt32Pointer(10),
-			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 7, PeriodSeconds: 10},
-			},
-		},
-	}
-	for _, tc := range tests {
-		scaleUpBehavior := &autoscalingv2.HPAScalingDirectionBehavior{}
-		if tc.rateUpPods != nil {
-			scaleUpBehavior.Policies = append(scaleUpBehavior.Policies, autoscalingv2.HPAScalingPolicy{
-				Type: autoscalingv2.PodsScalingPolicy, Value: *tc.rateUpPods, PeriodSeconds: *tc.rateUpPeriodSeconds,
-			})
-		}
-		if tc.rateUpPercent != nil {
-			scaleUpBehavior.Policies = append(scaleUpBehavior.Policies, autoscalingv2.HPAScalingPolicy{
-				Type: autoscalingv2.PercentScalingPolicy, Value: *tc.rateUpPercent, PeriodSeconds: *tc.rateUpPeriodSeconds,
-			})
-		}
-		up := generateHPAScaleUpConstraint(scaleUpBehavior)
-		assert.EqualValues(t, tc.expectedPolicies, up.Policies)
-	}
-}
+		rateUpPods                 *int32
+		rateUpPodsPeriodSeconds    *int32
+		rateUpPercent              *int32
+		rateUpPercentPeriodSeconds *int32
+		stabilizationSeconds       *int32
 
-func TestGenerateScaleDownConstraint(t *testing.T) {
-	type TestCase struct {
-		rateDownPods          *int32
-		rateDownPercent       *int32
-		rateDownPeriodSeconds *int32
 		expectedPolicies      []autoscalingv2.HPAScalingPolicy
+		expectedStabilization int32
 		annotation            string
 	}
 	tests := []TestCase{
 		{
 			annotation: "Default values",
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 60},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
+			},
+			expectedStabilization: 0, // just to show that we always check that default expected stabilization is 0
+		},
+		{
+			annotation:                 "All parameters are specified",
+			rateUpPods:                 createInt32Pointer(1),
+			rateUpPodsPeriodSeconds:    createInt32Pointer(2),
+			rateUpPercent:              createInt32Pointer(3),
+			rateUpPercentPeriodSeconds: createInt32Pointer(4),
+			stabilizationSeconds:       createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:              "Pod policy is specified",
+			rateUpPods:              createInt32Pointer(1),
+			rateUpPodsPeriodSeconds: createInt32Pointer(2),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 		},
 		{
-			annotation:            "pods policy is specified",
-			rateDownPods:          createInt32Pointer(1),
-			rateDownPeriodSeconds: createInt32Pointer(120),
+			annotation: "Pod value is specified",
+			rateUpPods: createInt32Pointer(1),
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 1, PeriodSeconds: 120},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 		},
 		{
-			annotation:            "percent policy is specified",
-			rateDownPercent:       createInt32Pointer(10),
-			rateDownPeriodSeconds: createInt32Pointer(120),
+			annotation:              "Pod period is specified",
+			rateUpPodsPeriodSeconds: createInt32Pointer(2),
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 10, PeriodSeconds: 120},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(2)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 		},
 		{
-			annotation:            "Pods and Percent policies are defined",
-			rateDownPods:          createInt32Pointer(6),
-			rateDownPercent:       createInt32Pointer(7),
-			rateDownPeriodSeconds: createInt32Pointer(100),
+			annotation:                 "Percent policy is specified",
+			rateUpPercent:              createInt32Pointer(7),
+			rateUpPercentPeriodSeconds: createInt32Pointer(10),
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 6, PeriodSeconds: 100},
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 7, PeriodSeconds: 100},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(10)},
+			},
+		},
+		{
+			annotation:    "Percent value is specified",
+			rateUpPercent: createInt32Pointer(7),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(60)},
+			},
+		},
+		{
+			annotation:                 "Percent period is specified",
+			rateUpPercentPeriodSeconds: createInt32Pointer(10),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(10)},
+			},
+		},
+		{
+			annotation:              "Pod period and stabiliation period are specified",
+			rateUpPodsPeriodSeconds: createInt32Pointer(2),
+			stabilizationSeconds:    createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(2)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:           "Percent value and stabilization period are specified",
+			rateUpPercent:        createInt32Pointer(7),
+			stabilizationSeconds: createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(60)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:           "Only values are specified",
+			rateUpPods:           createInt32Pointer(1),
+			rateUpPercent:        createInt32Pointer(3),
+			stabilizationSeconds: createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(60)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:                 "Only periods are specified",
+			rateUpPodsPeriodSeconds:    createInt32Pointer(2),
+			rateUpPercentPeriodSeconds: createInt32Pointer(4),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(2)},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(4)},
 			},
 		},
 	}
 	for _, tc := range tests {
-		directionBehavior := autoscalingv2.HPAScalingDirectionBehavior{}
-		if tc.rateDownPods != nil {
-			directionBehavior.Policies = append(directionBehavior.Policies, autoscalingv2.HPAScalingPolicy{
-				PeriodSeconds: *tc.rateDownPeriodSeconds, Type: autoscalingv2.PodsScalingPolicy, Value: *tc.rateDownPods,
-			})
-		}
-		if tc.rateDownPercent != nil {
-			directionBehavior.Policies = append(directionBehavior.Policies, autoscalingv2.HPAScalingPolicy{
-				PeriodSeconds: *tc.rateDownPeriodSeconds, Type: autoscalingv2.PercentScalingPolicy, Value: *tc.rateDownPercent,
-			})
-		}
-		down := generateHPAScaleDownConstraint(&directionBehavior)
-		assert.EqualValues(t, tc.expectedPolicies, down.Policies)
+		t.Run(tc.annotation, func(t *testing.T) {
+			scaleUpBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
+				StabilizationWindowSeconds: tc.stabilizationSeconds,
+			}
+			if tc.rateUpPods != nil || tc.rateUpPodsPeriodSeconds != nil {
+				scaleUpBehavior.Policies = append(scaleUpBehavior.Policies, autoscalingv2.HPAScalingPolicy{
+					Type: autoscalingv2.PodsScalingPolicy, Value: tc.rateUpPods, PeriodSeconds: tc.rateUpPodsPeriodSeconds,
+				})
+			}
+			if tc.rateUpPercent != nil || tc.rateUpPercentPeriodSeconds != nil {
+				scaleUpBehavior.Policies = append(scaleUpBehavior.Policies, autoscalingv2.HPAScalingPolicy{
+					Type: autoscalingv2.PercentScalingPolicy, Value: tc.rateUpPercent, PeriodSeconds: tc.rateUpPercentPeriodSeconds,
+				})
+			}
+			up := generateHPAScaleUpConstraint(scaleUpBehavior)
+			assert.Equal(t, tc.expectedPolicies, up.Policies)
+			assert.Equal(t, tc.expectedStabilization, *up.StabilizationWindowSeconds)
+		})
+	}
+}
+
+func TestGenerateScaleDownConstraint(t *testing.T) {
+	type TestCase struct {
+		rateDownPods                 *int32
+		rateDownPodsPeriodSeconds    *int32
+		rateDownPercent              *int32
+		rateDownPercentPeriodSeconds *int32
+		stabilizationSeconds         *int32
+
+		expectedPolicies      []autoscalingv2.HPAScalingPolicy
+		expectedStabilization int32
+		annotation            string
+	}
+	tests := []TestCase{
+		{
+			annotation: "Default values",
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
+			},
+			expectedStabilization: 300,
+		},
+		{
+			annotation:                   "All parameters are specified",
+			rateDownPods:                 createInt32Pointer(1),
+			rateDownPodsPeriodSeconds:    createInt32Pointer(2),
+			rateDownPercent:              createInt32Pointer(3),
+			rateDownPercentPeriodSeconds: createInt32Pointer(4),
+			stabilizationSeconds:         createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:                   "Percent policy is specified",
+			rateDownPercent:              createInt32Pointer(1),
+			rateDownPercentPeriodSeconds: createInt32Pointer(2),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
+			},
+			expectedStabilization: 300,
+		},
+		{
+			annotation:                "Pods policy is specified",
+			rateDownPods:              createInt32Pointer(3),
+			rateDownPodsPeriodSeconds: createInt32Pointer(4),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
+			},
+			expectedStabilization: 300,
+		},
+		{
+			annotation:                "Only values are specified",
+			rateDownPods:              createInt32Pointer(1),
+			rateDownPodsPeriodSeconds: createInt32Pointer(4), // we cannot skip period or it won't work
+			rateDownPercent:           createInt32Pointer(3),
+			stabilizationSeconds:      createInt32Pointer(25),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(60)},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(4)},
+			},
+			expectedStabilization: 25,
+		},
+		{
+			annotation:                   "Only periods are specified",
+			rateDownPercentPeriodSeconds: createInt32Pointer(4),
+			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
+				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(4)},
+			},
+			expectedStabilization: 300,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.annotation, func(t *testing.T) {
+			scaleDownBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
+				StabilizationWindowSeconds: tc.stabilizationSeconds,
+			}
+			if tc.rateDownPods != nil || tc.rateDownPodsPeriodSeconds != nil {
+				scaleDownBehavior.Policies = append(scaleDownBehavior.Policies, autoscalingv2.HPAScalingPolicy{
+					Type: autoscalingv2.PodsScalingPolicy, Value: tc.rateDownPods, PeriodSeconds: tc.rateDownPodsPeriodSeconds,
+				})
+			}
+			if tc.rateDownPercent != nil || tc.rateDownPercentPeriodSeconds != nil {
+				scaleDownBehavior.Policies = append(scaleDownBehavior.Policies, autoscalingv2.HPAScalingPolicy{
+					Type: autoscalingv2.PercentScalingPolicy, Value: tc.rateDownPercent, PeriodSeconds: tc.rateDownPercentPeriodSeconds,
+				})
+			}
+			down := generateHPAScaleDownConstraint(scaleDownBehavior)
+			assert.EqualValues(t, tc.expectedPolicies, down.Policies)
+			assert.Equal(t, tc.expectedStabilization, *down.StabilizationWindowSeconds)
+		})
 	}
 }
 
@@ -3961,19 +4090,23 @@ func TestNormalizeWithConstraintsDesiredReplicas(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
+		if tc.name != "simple scale up stabilization" {
+			continue
+		}
 		hc := HorizontalController{
 			recommendations: map[string][]timestampedRecommendation{
 				tc.key: tc.recommendations,
 			},
 		}
-		constraint := &autoscalingv2.HPAScalingDirectionBehavior{}
+		constraint := &autoscalingv2.HPAScalingDirectionBehavior{
+			StabilizationWindowSeconds: &tc.stabilizationWindowSeconds,
+		}
 		arg := NormalizationArg{
-			Key:                        tc.key,
-			ScaleDownConstraint:        generateHPAScaleDownConstraint(constraint),
-			ScaleUpConstraint:          generateHPAScaleUpConstraint(constraint),
-			DesiredReplicas:            tc.prenormalizedDesiredReplicas,
-			CurrentReplicas:            tc.currentReplicas,
-			StabilizationWindowSeconds: tc.stabilizationWindowSeconds,
+			Key:                 tc.key,
+			ScaleDownConstraint: generateHPAScaleDownConstraint(constraint),
+			ScaleUpConstraint:   generateHPAScaleUpConstraint(constraint),
+			DesiredReplicas:     tc.prenormalizedDesiredReplicas,
+			CurrentReplicas:     tc.currentReplicas,
 		}
 		r, _, _ := hc.stabilizeRecommendationWithConstraints(arg)
 		if r != tc.expectedStabilizedReplicas {
