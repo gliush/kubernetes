@@ -65,26 +65,27 @@ var (
 		Policies: []autoscalingv2.HPAScalingPolicy{
 			{
 				Type:          autoscalingv2.PodsScalingPolicy,
-				Value:         scaleUpLimitMinimumPods,
-				PeriodSeconds: 60,
+				Value:         &scaleUpLimitMinimumPods,
+				PeriodSeconds: &scaleUpPeriod,
 			},
 			{
 				Type:          autoscalingv2.PercentScalingPolicy,
-				Value:         scaleUpLimitPercent,
-				PeriodSeconds: 60,
+				Value:         &scaleUpLimitPercent,
+				PeriodSeconds: &scaleUpPeriod,
 			},
 		},
 	}
 	scaleDownPeriod                    int32 = 60
 	scaleDownDelaySeconds              int32 = 300
+	scaleDownLimitPercent              int32 = 100
 	defaultHPAScaleDownConstraintValue       = autoscalingv2.HPAScalingDirectionBehavior{
 		StabilizationWindowSeconds: &scaleDownDelaySeconds,
 		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
 			{
 				Type:          autoscalingv2.PercentScalingPolicy,
-				Value:         100,
-				PeriodSeconds: 60,
+				Value:         &scaleDownLimitPercent,
+				PeriodSeconds: &scaleDownPeriod,
 			},
 		},
 	}
@@ -903,25 +904,19 @@ func (a *HorizontalController) stabilizeRecommendationWithConstraints(args Norma
 }
 
 // generateHPAScaleUpConstraint returns a fully-initialized HPAScaleConstraintValue
-// i.e. all the pointers that are `nil` in the input parameter, will be filled with default values
+// We guarantee that no pointer in the structure will have 'nil' value
+// All the pointers that are `nil` in the input parameter, will be filled with default values
 func generateHPAScaleUpConstraint(directionBehavior *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	defaultConstraint := defaultHPAScaleUpConstraintValue.DeepCopy()
-	if directionBehavior == nil {
-		return defaultConstraint
-	} else {
-		return copyHPAConstraint(directionBehavior, defaultConstraint)
-	}
+	return copyHPAConstraint(directionBehavior, defaultConstraint)
 }
 
-// generateHPAScaleDownConstraint returns a fully-initialized HPAScaleConstraintValue
-// i.e. all the pointers that are `nil` in the input parameter, will be filled with default values
+// generateHPAScaleDownConstraint returns a fully-initialized HPAScaleConstraintValue.
+// We guarantee that no pointer in the structure will have 'nil' value
+// All the pointers that are `nil` in the input parameter, will be filled with default values
 func generateHPAScaleDownConstraint(hpaConstraints *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
 	defaultConstraint := defaultHPAScaleDownConstraintValue.DeepCopy()
-	if hpaConstraints == nil {
-		return defaultConstraint
-	} else {
-		return copyHPAConstraint(hpaConstraints, defaultConstraint)
-	}
+	return copyHPAConstraint(hpaConstraints, defaultConstraint)
 }
 
 // copyHPAConstraint copies all non-`nil` fields in HPA constraint structure
@@ -936,13 +931,39 @@ func copyHPAConstraint(from, to *autoscalingv2.HPAScalingDirectionBehavior) *aut
 		to.StabilizationWindowSeconds = from.StabilizationWindowSeconds
 	}
 	if from.Policies != nil {
-		to.Policies = from.Policies
+		for _, policy := range from.Policies {
+			copyHPAScalingPolicy(policy, to)
+		}
 	}
 	return to
 }
 
+// copyHPAScalingPolicy copies values from a policy to Scaling Behaviour for the same policy type
+func copyHPAScalingPolicy(sourcePolicy autoscalingv2.HPAScalingPolicy, to *autoscalingv2.HPAScalingDirectionBehavior) {
+	found := false
+	for idx := range to.Policies {
+		if to.Policies[idx].Type != sourcePolicy.Type {
+			continue
+		}
+		found = true
+		if sourcePolicy.Value != nil {
+			to.Policies[idx].Value = sourcePolicy.Value
+		}
+		if sourcePolicy.PeriodSeconds != nil {
+			to.Policies[idx].PeriodSeconds = sourcePolicy.PeriodSeconds
+		}
+		break
+	}
+	// for scaling down we have a policy only for `percent`.
+	// So if the users adds policy for `pods`, we would not be able to find it in the previous loop
+	// And so we should append it
+	if found == false {
+		to.Policies = append(to.Policies, sourcePolicy)
+	}
+}
+
 // convertDesiredReplicasWithConstraintRate performs the actual normalization, given the constraint rate
-// It doesn't consider the constraint Delay, it is done separately
+// It doesn't consider the stabilizationWindow, it is done separately
 func (a *HorizontalController) convertDesiredReplicasWithConstraintRate(args NormalizationArg) (int32, string, string) {
 	var possibleLimitingReason, possibleLimitingMessage string
 
@@ -1043,43 +1064,51 @@ func calculateScaleUpLimit(currentReplicas int32) int32 {
 // For scaling up both rate.Pods and rate.Percent are always defined
 // If the user doesn't specify them, the default values are used instead
 // Check defaultHPAScaleUpConstraintValue for default values
-func calculateScaleUpLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, hpaRate *autoscalingv2.HPAScalingDirectionBehavior) int32 {
-	var max int32 = 0
+func calculateScaleUpLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior *autoscalingv2.HPAScalingDirectionBehavior) int32 {
+	var result int32 = 0
 	var proposed int32
-	for _, policy := range hpaRate.Policies {
-		replicasAddedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
+	var selectPolicyFn func(int32, int32) int32
+	if *behavior.SelectPolicy == autoscalingv2.MaxPolicySelect {
+		selectPolicyFn = max // for scaling up maximum change produces maximum value
+	} else if *behavior.SelectPolicy == autoscalingv2.MinPolicySelect {
+		selectPolicyFn = min
+	}
+	for _, policy := range behavior.Policies {
+		replicasAddedInCurrentPeriod := getReplicasChangePerPeriod(*policy.PeriodSeconds, scaleEvents)
 		periodStartReplicas := currentReplicas - replicasAddedInCurrentPeriod
 		if policy.Type == autoscalingv2.PodsScalingPolicy {
-			proposed = int32(periodStartReplicas + policy.Value)
+			proposed = int32(periodStartReplicas + *policy.Value)
 		} else if policy.Type == autoscalingv2.PercentScalingPolicy {
-			proposed = int32(float64(periodStartReplicas) * (1 + float64(policy.Value)/100))
+			proposed = int32(float64(periodStartReplicas) * (1 + float64(*policy.Value)/100))
 		}
-		if proposed > max {
-			max = proposed
-		}
+		result = selectPolicyFn(result, proposed)
 	}
-	return max
+	return result
 }
 
 // calculateScaleDownLimit returns the maximum number of pods that could be deleted for the given rate
 // For scaling down both rate.Pods and rate.Percent could be nil, it means that we allow to remove all the pods
 // Check defaultHPAScaleDownConstraintValue for default values
-func calculateScaleDownLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, hpaRate autoscalingv2.HPAScalingDirectionBehavior) int32 {
-	var min int32 = math.MaxInt32
+func calculateScaleDownLimitWithConstraints(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior autoscalingv2.HPAScalingDirectionBehavior) int32 {
+	var result int32 = math.MaxInt32
 	var proposed int32
-	for _, policy := range hpaRate.Policies {
-		replicasDeletedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
+	var selectPolicyFn func(int32, int32) int32
+	if *behavior.SelectPolicy == autoscalingv2.MaxPolicySelect {
+		selectPolicyFn = min // for scaling down maximum change produces minimum value
+	} else if *behavior.SelectPolicy == autoscalingv2.MinPolicySelect {
+		selectPolicyFn = min
+	}
+	for _, policy := range behavior.Policies {
+		replicasDeletedInCurrentPeriod := getReplicasChangePerPeriod(*policy.PeriodSeconds, scaleEvents)
 		periodStartReplicas := currentReplicas + replicasDeletedInCurrentPeriod
 		if policy.Type == autoscalingv2.PodsScalingPolicy {
-			proposed = periodStartReplicas - policy.Value
+			proposed = periodStartReplicas - *policy.Value
 		} else if policy.Type == autoscalingv2.PercentScalingPolicy {
-			proposed = int32(float64(periodStartReplicas) * (1 - float64(policy.Value)/100))
+			proposed = int32(float64(periodStartReplicas) * (1 - float64(*policy.Value)/100))
 		}
-		if proposed < min {
-			min = proposed
-		}
+		result = selectPolicyFn(result, proposed)
 	}
-	return min
+	return result
 }
 
 // scaleForResourceMappings attempts to fetch the scale for the
