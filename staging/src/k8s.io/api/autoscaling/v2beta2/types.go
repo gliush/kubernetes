@@ -163,8 +163,8 @@ const (
 
 type HPAScalingPolicy struct {
 	Type          HPABehaviorScalingPolicyType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=HPABehaviorScalingPolicyType"`
-	Value         int32                        `json:"value" protobuf:"varint,2,opt,name=value"`
-	PeriodSeconds int32                        `json:"periodSeconds" protobuf:"varint,3,opt,name=periodSeconds"`
+	Value         *int32                       `json:"value" protobuf:"varint,2,opt,name=value"`
+	PeriodSeconds *int32                       `json:"periodSeconds" protobuf:"varint,3,opt,name=periodSeconds"`
 }
 
 // MetricSourceType indicates the type of metric.
