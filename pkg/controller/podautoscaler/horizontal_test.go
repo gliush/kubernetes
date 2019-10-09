@@ -106,13 +106,13 @@ type fakeResource struct {
 
 type testCase struct {
 	sync.Mutex
-	minReplicas         int32
-	maxReplicas         int32
-	specReplicas        int32
-	statusReplicas      int32
-	initialReplicas     int32
-	scaleUpConstraint   *autoscalingv2.HPAScalingDirectionBehavior
-	scaleDownConstraint *autoscalingv2.HPAScalingDirectionBehavior
+	minReplicas       int32
+	maxReplicas       int32
+	specReplicas      int32
+	statusReplicas    int32
+	initialReplicas   int32
+	scaleUpBehavior   *autoscalingv2.HPAScalingDirectionBehavior
+	scaleDownBehavior *autoscalingv2.HPAScalingDirectionBehavior
 
 	// CPU target utilization as a percentage of the requested resources.
 	CPUTarget                    int32
@@ -2164,7 +2164,7 @@ func TestUpscaleCap(t *testing.T) {
 		maxReplicas:             100,
 		specReplicas:            3,
 		statusReplicas:          3,
-		scaleUpConstraint:       generateConstraint(nil, createInt32Pointer(700), nil),
+		scaleUpBehavior:         generateBehavior(nil, createInt32Pointer(700), nil),
 		initialReplicas:         3,
 		expectedDesiredReplicas: 24,
 		CPUTarget:               10,
@@ -2182,12 +2182,12 @@ func TestUpscaleCap(t *testing.T) {
 
 func TestUpscaleCapGreaterThanMaxReplicas(t *testing.T) {
 	tc := testCase{
-		minReplicas:       1,
-		maxReplicas:       20,
-		specReplicas:      3,
-		statusReplicas:    3,
-		scaleUpConstraint: generateConstraint(nil, createInt32Pointer(700), nil),
-		initialReplicas:   3,
+		minReplicas:     1,
+		maxReplicas:     20,
+		specReplicas:    3,
+		statusReplicas:  3,
+		scaleUpBehavior: generateBehavior(nil, createInt32Pointer(700), nil),
+		initialReplicas: 3,
 		// expectedDesiredReplicas would be 24 without maxReplicas
 		expectedDesiredReplicas: 20,
 		CPUTarget:               10,
@@ -2986,7 +2986,7 @@ func TestConvertDesiredReplicasConstrainedWithRules(t *testing.T) {
 			expectedDesiredReplicas:          1000,
 			hpaMinReplicas:                   1,
 			hpaMaxReplicas:                   2000,
-			expectedConvertedDesiredReplicas: calculateScaleUpLimitWithConstraints(3, []timestampedScaleEvent{}, generateHPAScaleUpConstraint(nil)),
+			expectedConvertedDesiredReplicas: calculateScaleUpLimitWithBehaviors(3, []timestampedScaleEvent{}, generateHPAScaleUpBehavior(nil)),
 			expectedCondition:                "ScaleUpLimit",
 			annotation:                       "scaleUpLimit is the limit because scaleUpLimit < maxReplicas",
 		},
@@ -2995,14 +2995,14 @@ func TestConvertDesiredReplicasConstrainedWithRules(t *testing.T) {
 	for _, ctc := range conversionTestCases {
 		hc := HorizontalController{}
 		arg := NormalizationArg{
-			CurrentReplicas:     ctc.currentReplicas,
-			DesiredReplicas:     ctc.expectedDesiredReplicas,
-			MinReplicas:         &ctc.hpaMinReplicas,
-			MaxReplicas:         ctc.hpaMaxReplicas,
-			ScaleUpConstraint:   generateHPAScaleUpConstraint(nil),
-			ScaleDownConstraint: generateHPAScaleDownConstraint(nil),
+			CurrentReplicas:   ctc.currentReplicas,
+			DesiredReplicas:   ctc.expectedDesiredReplicas,
+			MinReplicas:       &ctc.hpaMinReplicas,
+			MaxReplicas:       ctc.hpaMaxReplicas,
+			ScaleUpBehavior:   generateHPAScaleUpBehavior(nil),
+			ScaleDownBehavior: generateHPAScaleDownBehavior(nil),
 		}
-		actualConvertedDesiredReplicas, actualCondition, _ := hc.convertDesiredReplicasWithConstraintRate(arg)
+		actualConvertedDesiredReplicas, actualCondition, _ := hc.convertDesiredReplicasWithBehaviorRate(arg)
 
 		assert.Equal(t, ctc.expectedConvertedDesiredReplicas, actualConvertedDesiredReplicas, ctc.annotation)
 		assert.Equal(t, ctc.expectedCondition, actualCondition, ctc.annotation)
@@ -3013,7 +3013,7 @@ func createInt32Pointer(x int32) *int32 {
 	return &x
 }
 
-func generateConstraint(pods, percent, period *int32) *autoscalingv2.HPAScalingDirectionBehavior {
+func generateBehavior(pods, percent, period *int32) *autoscalingv2.HPAScalingDirectionBehavior {
 	directionBehavior := autoscalingv2.HPAScalingDirectionBehavior{}
 	if pods != nil {
 		directionBehavior.Policies = append(directionBehavior.Policies,
@@ -3477,26 +3477,26 @@ func TestScaleRate(t *testing.T) {
 				tc.key: tc.scaleDownEvents,
 			},
 		}
-		var scaleUpConstraint *autoscalingv2.HPAScalingDirectionBehavior = nil
-		var scaleDownConstraint *autoscalingv2.HPAScalingDirectionBehavior = nil
+		var scaleUpBehavior *autoscalingv2.HPAScalingDirectionBehavior = nil
+		var scaleDownBehavior *autoscalingv2.HPAScalingDirectionBehavior = nil
 
 		if tc.rateUpPods != nil || tc.rateUpPercent != nil || tc.rateUpPeriodSeconds != nil {
-			scaleUpConstraint = generateConstraint(tc.rateUpPods, tc.rateUpPercent, tc.rateUpPeriodSeconds)
+			scaleUpBehavior = generateBehavior(tc.rateUpPods, tc.rateUpPercent, tc.rateUpPeriodSeconds)
 		}
 		if tc.rateDownPods != nil || tc.rateDownPercent != nil || tc.rateDownPeriodSeconds != nil {
-			scaleDownConstraint = generateConstraint(tc.rateDownPods, tc.rateDownPercent, tc.rateDownPeriodSeconds)
+			scaleDownBehavior = generateBehavior(tc.rateDownPods, tc.rateDownPercent, tc.rateDownPeriodSeconds)
 		}
 		arg := NormalizationArg{
-			Key:                 tc.key,
-			ScaleUpConstraint:   generateHPAScaleUpConstraint(scaleUpConstraint),
-			ScaleDownConstraint: generateHPAScaleDownConstraint(scaleDownConstraint),
-			MinReplicas:         tc.specMinReplicas,
-			MaxReplicas:         tc.specMaxReplicas,
-			DesiredReplicas:     tc.prenormalizedDesiredReplicas,
-			CurrentReplicas:     tc.currentReplicas,
+			Key:               tc.key,
+			ScaleUpBehavior:   generateHPAScaleUpBehavior(scaleUpBehavior),
+			ScaleDownBehavior: generateHPAScaleDownBehavior(scaleDownBehavior),
+			MinReplicas:       tc.specMinReplicas,
+			MaxReplicas:       tc.specMaxReplicas,
+			DesiredReplicas:   tc.prenormalizedDesiredReplicas,
+			CurrentReplicas:   tc.currentReplicas,
 		}
 
-		r, _, _ := hc.convertDesiredReplicasWithConstraintRate(arg)
+		r, _, _ := hc.convertDesiredReplicasWithBehaviorRate(arg)
 		if r != tc.expectedReplicas {
 			t.Errorf("[%s] got %d replicas, expected %d", tc.name, r, tc.expectedReplicas)
 		}
@@ -3504,7 +3504,7 @@ func TestScaleRate(t *testing.T) {
 
 }
 
-func TestGenerateScaleUpConstraint(t *testing.T) {
+func TestGenerateScaleUpBehavior(t *testing.T) {
 	type TestCase struct {
 		rateUpPods                 *int32
 		rateUpPodsPeriodSeconds    *int32
@@ -3644,14 +3644,14 @@ func TestGenerateScaleUpConstraint(t *testing.T) {
 					Type: autoscalingv2.PercentScalingPolicy, Value: tc.rateUpPercent, PeriodSeconds: tc.rateUpPercentPeriodSeconds,
 				})
 			}
-			up := generateHPAScaleUpConstraint(scaleUpBehavior)
+			up := generateHPAScaleUpBehavior(scaleUpBehavior)
 			assert.Equal(t, tc.expectedPolicies, up.Policies)
 			assert.Equal(t, tc.expectedStabilization, *up.StabilizationWindowSeconds)
 		})
 	}
 }
 
-func TestGenerateScaleDownConstraint(t *testing.T) {
+func TestGenerateScaleDownBehavior(t *testing.T) {
 	type TestCase struct {
 		rateDownPods                 *int32
 		rateDownPodsPeriodSeconds    *int32
@@ -3739,7 +3739,7 @@ func TestGenerateScaleDownConstraint(t *testing.T) {
 					Type: autoscalingv2.PercentScalingPolicy, Value: tc.rateDownPercent, PeriodSeconds: tc.rateDownPercentPeriodSeconds,
 				})
 			}
-			down := generateHPAScaleDownConstraint(scaleDownBehavior)
+			down := generateHPAScaleDownBehavior(scaleDownBehavior)
 			assert.EqualValues(t, tc.expectedPolicies, down.Policies)
 			assert.Equal(t, tc.expectedStabilization, *down.StabilizationWindowSeconds)
 		})
@@ -3932,7 +3932,7 @@ func TestStoreScaleDownEvents(t *testing.T) {
 	}
 }
 
-func TestNormalizeWithConstraintsDesiredReplicas(t *testing.T) {
+func TestNormalizeWithBehaviorsDesiredReplicas(t *testing.T) {
 	type TestCase struct {
 		name                         string
 		key                          string
@@ -4102,13 +4102,13 @@ func TestNormalizeWithConstraintsDesiredReplicas(t *testing.T) {
 			StabilizationWindowSeconds: &tc.stabilizationWindowSeconds,
 		}
 		arg := NormalizationArg{
-			Key:                 tc.key,
-			ScaleDownConstraint: generateHPAScaleDownConstraint(constraint),
-			ScaleUpConstraint:   generateHPAScaleUpConstraint(constraint),
-			DesiredReplicas:     tc.prenormalizedDesiredReplicas,
-			CurrentReplicas:     tc.currentReplicas,
+			Key:               tc.key,
+			ScaleDownBehavior: generateHPAScaleDownBehavior(constraint),
+			ScaleUpBehavior:   generateHPAScaleUpBehavior(constraint),
+			DesiredReplicas:   tc.prenormalizedDesiredReplicas,
+			CurrentReplicas:   tc.currentReplicas,
 		}
-		r, _, _ := hc.stabilizeRecommendationWithConstraints(arg)
+		r, _, _ := hc.stabilizeRecommendationWithBehaviors(arg)
 		if r != tc.expectedStabilizedReplicas {
 			t.Errorf("[%s] got %d stabilized replicas, expected %d", tc.name, r, tc.expectedStabilizedReplicas)
 		}
