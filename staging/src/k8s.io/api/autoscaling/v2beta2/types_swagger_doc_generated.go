@@ -58,25 +58,15 @@ func (ExternalMetricStatus) SwaggerDoc() map[string]string {
 	return map_ExternalMetricStatus
 }
 
-var map_HPAScalingBehavior = map[string]string{
-	"":          "HPAScalingBehavior configures a scaling behavior for Up and Down direction (scaleUp and scaleDown fields respectively)",
-	"scaleUp":   "constraint value for scaling Up",
-	"scaleDown": "constraint value for scaling Down",
-}
-
-func (HPAScalingBehavior) SwaggerDoc() map[string]string {
-	return map_HPAScalingBehavior
-}
-
-var map_HPAScalingDirectionBehavior = map[string]string{
-	"":                           "HPAScalingDirectionBehavior configures the scaling policy and the policy selector",
+var map_HPAScalingRules = map[string]string{
+	"":                           "HPAScalingRules configures the scaling policy and the policy selector",
 	"stabilizationWindowSeconds": "StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while scaling up or scaling down",
 	"selectPolicy":               "SelectPolicy is used to specify which policy should be used",
 	"policies":                   "Policies is a list of potential scaling polices which can used during scaling",
 }
 
-func (HPAScalingDirectionBehavior) SwaggerDoc() map[string]string {
-	return map_HPAScalingDirectionBehavior
+func (HPAScalingRules) SwaggerDoc() map[string]string {
+	return map_HPAScalingRules
 }
 
 var map_HorizontalPodAutoscaler = map[string]string{
@@ -88,6 +78,16 @@ var map_HorizontalPodAutoscaler = map[string]string{
 
 func (HorizontalPodAutoscaler) SwaggerDoc() map[string]string {
 	return map_HorizontalPodAutoscaler
+}
+
+var map_HorizontalPodAutoscalerBehavior = map[string]string{
+	"":          "HorizontalPodAutoscalerBehavior configures a scaling behavior for Up and Down direction (scaleUp and scaleDown fields respectively)",
+	"scaleUp":   "constraint value for scaling Up",
+	"scaleDown": "constraint value for scaling Down",
+}
+
+func (HorizontalPodAutoscalerBehavior) SwaggerDoc() map[string]string {
+	return map_HorizontalPodAutoscalerBehavior
 }
 
 var map_HorizontalPodAutoscalerCondition = map[string]string{

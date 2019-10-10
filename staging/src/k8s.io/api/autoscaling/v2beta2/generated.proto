@@ -64,20 +64,16 @@ message ExternalMetricStatus {
   optional MetricValueStatus current = 2;
 }
 
-// HPAScalingBehavior configures a scaling behavior for Up and Down direction
-// (scaleUp and scaleDown fields respectively)
-message HPAScalingBehavior {
-  // constraint value for scaling Up
-  // +optional
-  optional HPAScalingDirectionBehavior scaleUp = 1;
+message HPAScalingPolicy {
+  optional string type = 1;
 
-  // constraint value for scaling Down
-  // +optional
-  optional HPAScalingDirectionBehavior scaleDown = 2;
+  optional int32 value = 2;
+
+  optional int32 periodSeconds = 3;
 }
 
-// HPAScalingDirectionBehavior configures the scaling policy and the policy selector
-message HPAScalingDirectionBehavior {
+// HPAScalingRules configures the scaling policy and the policy selector
+message HPAScalingRules {
   // StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
   // scaling up or scaling down
   // +optional
@@ -90,14 +86,6 @@ message HPAScalingDirectionBehavior {
   // Policies is a list of potential scaling polices which can used during scaling
   // +optional
   repeated HPAScalingPolicy policies = 2;
-}
-
-message HPAScalingPolicy {
-  optional string type = 1;
-
-  optional int32 value = 2;
-
-  optional int32 periodSeconds = 3;
 }
 
 // HorizontalPodAutoscaler is the configuration for a horizontal pod
@@ -117,6 +105,18 @@ message HorizontalPodAutoscaler {
   // status is the current information about the autoscaler.
   // +optional
   optional HorizontalPodAutoscalerStatus status = 3;
+}
+
+// HorizontalPodAutoscalerBehavior configures a scaling behavior for Up and Down direction
+// (scaleUp and scaleDown fields respectively)
+message HorizontalPodAutoscalerBehavior {
+  // constraint value for scaling Up
+  // +optional
+  optional HPAScalingRules scaleUp = 1;
+
+  // constraint value for scaling Down
+  // +optional
+  optional HPAScalingRules scaleDown = 2;
 }
 
 // HorizontalPodAutoscalerCondition describes the state of
@@ -184,7 +184,7 @@ message HorizontalPodAutoscalerSpec {
 
   // Behaviour contains the scaling behavior for the HPA
   // +optional
-  optional HPAScalingBehavior behavior = 5;
+  optional HorizontalPodAutoscalerBehavior behavior = 5;
 }
 
 // HorizontalPodAutoscalerStatus describes the current status of a horizontal pod autoscaler.
