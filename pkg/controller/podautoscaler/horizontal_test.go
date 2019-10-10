@@ -3013,6 +3013,10 @@ func createInt32Pointer(x int32) *int32 {
 	return &x
 }
 
+func createStringPointer(x string) *string {
+	return &x
+}
+
 func generateBehavior(pods, percent, period *int32) *autoscalingv2.HPAScalingDirectionBehavior {
 	directionBehavior := autoscalingv2.HPAScalingDirectionBehavior{}
 	if pods != nil {
@@ -3511,11 +3515,15 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 		rateUpPercent              *int32
 		rateUpPercentPeriodSeconds *int32
 		stabilizationSeconds       *int32
+		selectPolicy               *autoscalingv2.ScalingPolicySelect
 
 		expectedPolicies      []autoscalingv2.HPAScalingPolicy
 		expectedStabilization int32
+		expectedSelectPolicy  string
 		annotation            string
 	}
+	maxPolicy := autoscalingv2.ScalingPolicySelect("max")
+	minPolicy := autoscalingv2.ScalingPolicySelect("min")
 	tests := []TestCase{
 		{
 			annotation: "Default values",
@@ -3524,6 +3532,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 			expectedStabilization: 0, // just to show that we always check that default expected stabilization is 0
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:                 "All parameters are specified",
@@ -3532,28 +3541,34 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 			rateUpPercent:              createInt32Pointer(3),
 			rateUpPercentPeriodSeconds: createInt32Pointer(4),
 			stabilizationSeconds:       createInt32Pointer(25),
+			selectPolicy:               &maxPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:              "Pod policy is specified",
 			rateUpPods:              createInt32Pointer(1),
 			rateUpPodsPeriodSeconds: createInt32Pointer(2),
+			selectPolicy:            &minPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
+			expectedSelectPolicy: "min",
 		},
 		{
-			annotation: "Pod value is specified",
-			rateUpPods: createInt32Pointer(1),
+			annotation:   "Pod value is specified",
+			rateUpPods:   createInt32Pointer(1),
+			selectPolicy: &minPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(60)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
+			expectedSelectPolicy: "min",
 		},
 		{
 			annotation:              "Pod period is specified",
@@ -3562,6 +3577,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(2)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
+			expectedSelectPolicy: "max",
 		},
 		{
 			annotation:                 "Percent policy is specified",
@@ -3571,6 +3587,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(10)},
 			},
+			expectedSelectPolicy: "max",
 		},
 		{
 			annotation:    "Percent value is specified",
@@ -3579,6 +3596,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(60)},
 			},
+			expectedSelectPolicy: "max",
 		},
 		{
 			annotation:                 "Percent period is specified",
@@ -3587,6 +3605,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(60)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(10)},
 			},
+			expectedSelectPolicy: "max",
 		},
 		{
 			annotation:              "Pod period and stabiliation period are specified",
@@ -3597,6 +3616,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:           "Percent value and stabilization period are specified",
@@ -3607,6 +3627,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(7), PeriodSeconds: createInt32Pointer(60)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:           "Only values are specified",
@@ -3618,6 +3639,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(60)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:                 "Only periods are specified",
@@ -3627,12 +3649,14 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(4), PeriodSeconds: createInt32Pointer(2)},
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(4)},
 			},
+			expectedSelectPolicy: "max",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.annotation, func(t *testing.T) {
 			scaleUpBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
 				StabilizationWindowSeconds: tc.stabilizationSeconds,
+				SelectPolicy:               tc.selectPolicy,
 			}
 			if tc.rateUpPods != nil || tc.rateUpPodsPeriodSeconds != nil {
 				scaleUpBehavior.Policies = append(scaleUpBehavior.Policies, autoscalingv2.HPAScalingPolicy{
@@ -3647,6 +3671,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 			up := generateHPAScaleUpBehavior(scaleUpBehavior)
 			assert.Equal(t, tc.expectedPolicies, up.Policies)
 			assert.Equal(t, tc.expectedStabilization, *up.StabilizationWindowSeconds)
+			assert.Equal(t, autoscalingv2.ScalingPolicySelect(tc.expectedSelectPolicy), *up.SelectPolicy)
 		})
 	}
 }
@@ -3658,11 +3683,15 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 		rateDownPercent              *int32
 		rateDownPercentPeriodSeconds *int32
 		stabilizationSeconds         *int32
+		selectPolicy                 *autoscalingv2.ScalingPolicySelect
 
 		expectedPolicies      []autoscalingv2.HPAScalingPolicy
 		expectedStabilization int32
+		expectedSelectPolicy  string
 		annotation            string
 	}
+	maxPolicy := autoscalingv2.ScalingPolicySelect("max")
+	minPolicy := autoscalingv2.ScalingPolicySelect("min")
 	tests := []TestCase{
 		{
 			annotation: "Default values",
@@ -3670,6 +3699,7 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(60)},
 			},
 			expectedStabilization: 300,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:                   "All parameters are specified",
@@ -3678,20 +3708,24 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 			rateDownPercent:              createInt32Pointer(3),
 			rateDownPercentPeriodSeconds: createInt32Pointer(4),
 			stabilizationSeconds:         createInt32Pointer(25),
+			selectPolicy:                 &maxPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:                   "Percent policy is specified",
 			rateDownPercent:              createInt32Pointer(1),
 			rateDownPercentPeriodSeconds: createInt32Pointer(2),
+			selectPolicy:                 &minPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(2)},
 			},
 			expectedStabilization: 300,
+			expectedSelectPolicy:  "min",
 		},
 		{
 			annotation:                "Pods policy is specified",
@@ -3702,6 +3736,7 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(4)},
 			},
 			expectedStabilization: 300,
+			expectedSelectPolicy:  "max",
 		},
 		{
 			annotation:                "Only values are specified",
@@ -3709,11 +3744,13 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 			rateDownPodsPeriodSeconds: createInt32Pointer(4), // we cannot skip period or it won't work
 			rateDownPercent:           createInt32Pointer(3),
 			stabilizationSeconds:      createInt32Pointer(25),
+			selectPolicy:              &minPolicy,
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(3), PeriodSeconds: createInt32Pointer(60)},
 				{Type: autoscalingv2.PodsScalingPolicy, Value: createInt32Pointer(1), PeriodSeconds: createInt32Pointer(4)},
 			},
 			expectedStabilization: 25,
+			expectedSelectPolicy:  "min",
 		},
 		{
 			annotation:                   "Only periods are specified",
@@ -3722,12 +3759,14 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 				{Type: autoscalingv2.PercentScalingPolicy, Value: createInt32Pointer(100), PeriodSeconds: createInt32Pointer(4)},
 			},
 			expectedStabilization: 300,
+			expectedSelectPolicy:  "max",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.annotation, func(t *testing.T) {
 			scaleDownBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
 				StabilizationWindowSeconds: tc.stabilizationSeconds,
+				SelectPolicy:               tc.selectPolicy,
 			}
 			if tc.rateDownPods != nil || tc.rateDownPodsPeriodSeconds != nil {
 				scaleDownBehavior.Policies = append(scaleDownBehavior.Policies, autoscalingv2.HPAScalingPolicy{
@@ -3742,6 +3781,7 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 			down := generateHPAScaleDownBehavior(scaleDownBehavior)
 			assert.EqualValues(t, tc.expectedPolicies, down.Policies)
 			assert.Equal(t, tc.expectedStabilization, *down.StabilizationWindowSeconds)
+			assert.Equal(t, autoscalingv2.ScalingPolicySelect(tc.expectedSelectPolicy), *down.SelectPolicy)
 		})
 	}
 }
