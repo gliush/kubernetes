@@ -74,7 +74,7 @@ type HorizontalPodAutoscalerSpec struct {
 	Metrics []MetricSpec `json:"metrics,omitempty" protobuf:"bytes,4,rep,name=metrics"`
 	// Behaviour contains the scaling behavior for the HPA
 	// +optional
-	Behavior *HPAScalingBehavior `json:"behavior,omitempty" protobuf:"bytes,5,opt,name=behavior"`
+	Behavior *HorizontalPodAutoscalerBehavior `json:"behavior,omitempty" protobuf:"bytes,5,opt,name=behavior"`
 }
 
 // CrossVersionObjectReference contains enough information to let you identify the referred resource.
@@ -120,15 +120,15 @@ type MetricSpec struct {
 	External *ExternalMetricSource `json:"external,omitempty" protobuf:"bytes,5,opt,name=external"`
 }
 
-// HPAScalingBehavior configures a scaling behavior for Up and Down direction
+// HorizontalPodAutoscalerBehavior configures a scaling behavior for Up and Down direction
 // (scaleUp and scaleDown fields respectively)
-type HPAScalingBehavior struct {
+type HorizontalPodAutoscalerBehavior struct {
 	// constraint value for scaling Up
 	// +optional
-	ScaleUp *HPAScalingDirectionBehavior `json:"scaleUp,omitempty" protobuf:"bytes,1,opt,name=scaleUp"`
+	ScaleUp *HPAScalingRules `json:"scaleUp,omitempty" protobuf:"bytes,1,opt,name=scaleUp"`
 	// constraint value for scaling Down
 	// +optional
-	ScaleDown *HPAScalingDirectionBehavior `json:"scaleDown,omitempty" protobuf:"bytes,2,opt,name=scaleDown"`
+	ScaleDown *HPAScalingRules `json:"scaleDown,omitempty" protobuf:"bytes,2,opt,name=scaleDown"`
 }
 
 type ScalingPolicySelect string
@@ -140,8 +140,8 @@ const (
 	MinPolicySelect ScalingPolicySelect = "min"
 )
 
-// HPAScalingDirectionBehavior configures the scaling policy and the policy selector
-type HPAScalingDirectionBehavior struct {
+// HPAScalingRules configures the scaling policy and the policy selector
+type HPAScalingRules struct {
 	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
 	// scaling up or scaling down
 	// +optional
@@ -154,17 +154,17 @@ type HPAScalingDirectionBehavior struct {
 	Policies []HPAScalingPolicy `json:"policies,omitempty" protobuf:"bytes,2,rep,name=policies"`
 }
 
-type HPABehaviorScalingPolicyType string
+type HPAScalingPolicyType string
 
 const (
-	PodsScalingPolicy    HPABehaviorScalingPolicyType = "pods"
-	PercentScalingPolicy HPABehaviorScalingPolicyType = "percent"
+	PodsScalingPolicy    HPAScalingPolicyType = "pods"
+	PercentScalingPolicy HPAScalingPolicyType = "percent"
 )
 
 type HPAScalingPolicy struct {
-	Type          HPABehaviorScalingPolicyType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=HPABehaviorScalingPolicyType"`
-	Value         *int32                       `json:"value" protobuf:"varint,2,opt,name=value"`
-	PeriodSeconds *int32                       `json:"periodSeconds" protobuf:"varint,3,opt,name=periodSeconds"`
+	Type          HPAScalingPolicyType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=HPAScalingPolicyType"`
+	Value         *int32               `json:"value" protobuf:"varint,2,opt,name=value"`
+	PeriodSeconds *int32               `json:"periodSeconds" protobuf:"varint,3,opt,name=periodSeconds"`
 }
 
 // MetricSourceType indicates the type of metric.

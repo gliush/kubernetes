@@ -59,7 +59,7 @@ var (
 	scaleUpPeriod             int32 = 60
 	scaleUpDelaySeconds       int32
 	maxPolicy                 = autoscalingv2.MaxPolicySelect
-	defaultHPAScaleUpBehavior = autoscalingv2.HPAScalingDirectionBehavior{
+	defaultHPAScaleUpBehavior = autoscalingv2.HPAScalingRules{
 		StabilizationWindowSeconds: &scaleUpDelaySeconds,
 		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
@@ -78,7 +78,7 @@ var (
 	scaleDownPeriod             int32 = 60
 	scaleDownDelaySeconds       int32 = 300
 	scaleDownLimitPercent       int32 = 100
-	defaultHPAScaleDownBehavior       = autoscalingv2.HPAScalingDirectionBehavior{
+	defaultHPAScaleDownBehavior       = autoscalingv2.HPAScalingRules{
 		StabilizationWindowSeconds: &scaleDownDelaySeconds,
 		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
@@ -754,8 +754,8 @@ func (a *HorizontalController) normalizeDesiredReplicas(hpa *autoscalingv2.Horiz
 // NormalizationArg is used to pass all needed information between functions as one structure
 type NormalizationArg struct {
 	Key               string
-	ScaleUpBehavior   *autoscalingv2.HPAScalingDirectionBehavior
-	ScaleDownBehavior *autoscalingv2.HPAScalingDirectionBehavior
+	ScaleUpBehavior   *autoscalingv2.HPAScalingRules
+	ScaleDownBehavior *autoscalingv2.HPAScalingRules
 	MinReplicas       *int32
 	MaxReplicas       int32
 	CurrentReplicas   int32
@@ -904,24 +904,24 @@ func (a *HorizontalController) stabilizeRecommendationWithBehaviors(args Normali
 	return recommendation, reason, message
 }
 
-// generateHPAScaleUpBehavior returns a fully-initialized HPAScalingDirectionBehavior value
+// generateHPAScaleUpBehavior returns a fully-initialized HPAScalingRules value
 // We guarantee that no pointer in the structure will have 'nil' value
 // All the pointers that are `nil` in the input parameter, will be filled with default values
-func generateHPAScaleUpBehavior(directionBehavior *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
+func generateHPAScaleUpBehavior(directionBehavior *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
 	defaultBehavior := defaultHPAScaleUpBehavior.DeepCopy()
 	return copyHPABehavior(directionBehavior, defaultBehavior)
 }
 
-// generateHPAScaleDownBehavior returns a fully-initialized HPAScalingDirectionBehavior value
+// generateHPAScaleDownBehavior returns a fully-initialized HPAScalingRules value
 // We guarantee that no pointer in the structure will have 'nil' value
 // All the pointers that are `nil` in the input parameter, will be filled with default values
-func generateHPAScaleDownBehavior(directionBehavior *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
+func generateHPAScaleDownBehavior(directionBehavior *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
 	defaultBehavior := defaultHPAScaleDownBehavior.DeepCopy()
 	return copyHPABehavior(directionBehavior, defaultBehavior)
 }
 
 // copyHPABehavior copies all non-`nil` fields in HPA constraint structure
-func copyHPABehavior(from, to *autoscalingv2.HPAScalingDirectionBehavior) *autoscalingv2.HPAScalingDirectionBehavior {
+func copyHPABehavior(from, to *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
 	if from == nil {
 		return to
 	}
@@ -940,7 +940,7 @@ func copyHPABehavior(from, to *autoscalingv2.HPAScalingDirectionBehavior) *autos
 }
 
 // copyHPAScalingPolicy copies values from a policy to Scaling Behaviour for the same policy type
-func copyHPAScalingPolicy(sourcePolicy autoscalingv2.HPAScalingPolicy, to *autoscalingv2.HPAScalingDirectionBehavior) {
+func copyHPAScalingPolicy(sourcePolicy autoscalingv2.HPAScalingPolicy, to *autoscalingv2.HPAScalingRules) {
 	found := false
 	for idx := range to.Policies {
 		if to.Policies[idx].Type != sourcePolicy.Type {
@@ -1065,7 +1065,7 @@ func calculateScaleUpLimit(currentReplicas int32) int32 {
 // For scaling up both rate.Pods and rate.Percent are always defined
 // If the user doesn't specify them, the default values are used instead
 // Check defaultHPAScaleUpBehavior for default values
-func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior *autoscalingv2.HPAScalingDirectionBehavior) int32 {
+func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = 0
 	var proposed int32
 	var selectPolicyFn func(int32, int32) int32
@@ -1090,7 +1090,7 @@ func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []tim
 // calculateScaleDownLimit returns the maximum number of pods that could be deleted for the given rate
 // For scaling down both rate.Pods and rate.Percent could be nil, it means that we allow to remove all the pods
 // Check defaultHPAScaleDownBehavior for default values
-func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior autoscalingv2.HPAScalingDirectionBehavior) int32 {
+func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = math.MaxInt32
 	var proposed int32
 	var selectPolicyFn func(int32, int32) int32

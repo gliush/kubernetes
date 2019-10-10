@@ -111,8 +111,8 @@ type testCase struct {
 	specReplicas      int32
 	statusReplicas    int32
 	initialReplicas   int32
-	scaleUpBehavior   *autoscalingv2.HPAScalingDirectionBehavior
-	scaleDownBehavior *autoscalingv2.HPAScalingDirectionBehavior
+	scaleUpBehavior   *autoscalingv2.HPAScalingRules
+	scaleDownBehavior *autoscalingv2.HPAScalingRules
 
 	// CPU target utilization as a percentage of the requested resources.
 	CPUTarget                    int32
@@ -3017,8 +3017,8 @@ func createStringPointer(x string) *string {
 	return &x
 }
 
-func generateBehavior(pods, percent, period *int32) *autoscalingv2.HPAScalingDirectionBehavior {
-	directionBehavior := autoscalingv2.HPAScalingDirectionBehavior{}
+func generateBehavior(pods, percent, period *int32) *autoscalingv2.HPAScalingRules {
+	directionBehavior := autoscalingv2.HPAScalingRules{}
 	if pods != nil {
 		directionBehavior.Policies = append(directionBehavior.Policies,
 			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PodsScalingPolicy, Value: pods, PeriodSeconds: period})
@@ -3481,8 +3481,8 @@ func TestScaleRate(t *testing.T) {
 				tc.key: tc.scaleDownEvents,
 			},
 		}
-		var scaleUpBehavior *autoscalingv2.HPAScalingDirectionBehavior = nil
-		var scaleDownBehavior *autoscalingv2.HPAScalingDirectionBehavior = nil
+		var scaleUpBehavior *autoscalingv2.HPAScalingRules = nil
+		var scaleDownBehavior *autoscalingv2.HPAScalingRules = nil
 
 		if tc.rateUpPods != nil || tc.rateUpPercent != nil || tc.rateUpPeriodSeconds != nil {
 			scaleUpBehavior = generateBehavior(tc.rateUpPods, tc.rateUpPercent, tc.rateUpPeriodSeconds)
@@ -3654,7 +3654,7 @@ func TestGenerateScaleUpBehavior(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.annotation, func(t *testing.T) {
-			scaleUpBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
+			scaleUpBehavior := &autoscalingv2.HPAScalingRules{
 				StabilizationWindowSeconds: tc.stabilizationSeconds,
 				SelectPolicy:               tc.selectPolicy,
 			}
@@ -3764,7 +3764,7 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.annotation, func(t *testing.T) {
-			scaleDownBehavior := &autoscalingv2.HPAScalingDirectionBehavior{
+			scaleDownBehavior := &autoscalingv2.HPAScalingRules{
 				StabilizationWindowSeconds: tc.stabilizationSeconds,
 				SelectPolicy:               tc.selectPolicy,
 			}
@@ -4138,7 +4138,7 @@ func TestNormalizeWithBehaviorsDesiredReplicas(t *testing.T) {
 				tc.key: tc.recommendations,
 			},
 		}
-		constraint := &autoscalingv2.HPAScalingDirectionBehavior{
+		constraint := &autoscalingv2.HPAScalingRules{
 			StabilizationWindowSeconds: &tc.stabilizationWindowSeconds,
 		}
 		arg := NormalizationArg{

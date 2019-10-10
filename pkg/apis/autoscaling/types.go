@@ -100,18 +100,18 @@ type HorizontalPodAutoscalerSpec struct {
 	// and scaling down. It also is used to customize other aspects of scaling like the
 	// scale down stabilization window
 	// +option
-	Behavior *HPAScalingBehavior
+	Behavior *HorizontalPodAutoscalerBehavior
 }
 
-// HPAScalingBehavior configures a scaling behavior for Up and Down direction
+// HorizontalPodAutoscalerBehavior configures a scaling behavior for Up and Down direction
 // (scaleUp and scaleDown fields respectively)
-type HPAScalingBehavior struct {
+type HorizontalPodAutoscalerBehavior struct {
 	// The scaling behavior while scaling up. Contains a list of policies and the policy selector.
 	// +optional
-	ScaleUp *HPAScalingDirectionBehavior
+	ScaleUp *HPAScalingRules
 	// The scaling behavior while scaling down. Contains a list of policies and the policy selector.
 	// +optional
-	ScaleDown *HPAScalingDirectionBehavior
+	ScaleDown *HPAScalingRules
 }
 
 type ScalingPolicySelect string
@@ -123,8 +123,8 @@ const (
 	MinPolicySelect ScalingPolicySelect = "min"
 )
 
-// HPAScalingDirectionBehavior configures the scaling policy and the policy selector
-type HPAScalingDirectionBehavior struct {
+// HPAScalingRules configures the scaling policy and the policy selector
+type HPAScalingRules struct {
 	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
 	// scaling down. This prevents scale down of the autoscaling target in case the load fluctuates.
 	// +optional
@@ -137,20 +137,20 @@ type HPAScalingDirectionBehavior struct {
 	Policies []HPAScalingPolicy
 }
 
-type HPABehaviorScalingPolicyType string
+type HPAScalingPolicyType string
 
 const (
 	// PodsScalingPolicy is a policy used to specify a change in absolute number of pods.
-	PodsScalingPolicy HPABehaviorScalingPolicyType = "pods"
+	PodsScalingPolicy HPAScalingPolicyType = "pods"
 	// PercentScalingPolicy is a policy used to specify a relative amount of change with respect to
 	// the current number of pods.
-	PercentScalingPolicy HPABehaviorScalingPolicyType = "percent"
+	PercentScalingPolicy HPAScalingPolicyType = "percent"
 )
 
 // HPAScalingPolicy is a single policy which must hold true for a specified past interval.
 type HPAScalingPolicy struct {
 	// Type is used to specify the scaling policy.
-	Type HPABehaviorScalingPolicyType
+	Type HPAScalingPolicyType
 	// Value contains the amount of change which is permitted by the policy.
 	Value int32
 	// PeriodSeconds specifies the window of time for which the policy should hold true.

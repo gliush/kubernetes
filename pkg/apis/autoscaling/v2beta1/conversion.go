@@ -324,7 +324,7 @@ func Convert_v2beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutosca
 	}
 
 	if behaviorEnc, hasBehaviors := out.Annotations[autoscaling.BehaviorSpecsAnnotation]; hasBehaviors {
-		var behavior autoscaling.HPAScalingBehavior
+		var behavior autoscaling.HorizontalPodAutoscalerBehavior
 		if err := json.Unmarshal([]byte(behaviorEnc), &behavior); err != nil {
 			return err
 		}
