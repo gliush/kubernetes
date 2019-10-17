@@ -694,7 +694,7 @@ func (a *HorizontalController) reconcileAutoscaler(hpav1Shared *autoscalingv1.Ho
 		}
 		setCondition(hpa, autoscalingv2.AbleToScale, v1.ConditionTrue, "SucceededRescale", "the HPA controller was able to update the target scale to %d", desiredReplicas)
 		a.eventRecorder.Eventf(hpa, v1.EventTypeNormal, "SuccessfulRescale", "New size: %d; reason: %s", desiredReplicas, rescaleReason)
-		a.storeScaleEvent(key, currentReplicas, desiredReplicas)
+		a.storeScaleEvent(hpa.Spec.Behavior, key, currentReplicas, desiredReplicas)
 		klog.Infof("Successful rescale of %s, old size: %d, new size: %d, reason: %s",
 			hpa.Name, currentReplicas, desiredReplicas, rescaleReason)
 	} else {
@@ -795,17 +795,12 @@ func (a *HorizontalController) normalizeDesiredReplicasWithBehaviors(hpa *autosc
 }
 
 // getReplicasChangePerPeriod function find all the replica changes per period
-//    Also it marks all outdated events
 func getReplicasChangePerPeriod(periodSeconds int32, scaleEvents []timestampedScaleEvent) int32 {
 	period := time.Second * time.Duration(periodSeconds)
 	cutoff := time.Now().Add(-period)
 	var replicas int32
-	for i, rec := range scaleEvents {
-		if rec.timestamp.Before(cutoff) {
-			// outdated scale event are marked for later reuse
-			// can't use `rec` directly, because it is a copy of scaleEvents[i]
-			scaleEvents[i].outdated = true
-		} else {
+	for _, rec := range scaleEvents {
+		if rec.timestamp.After(cutoff) {
 			replicas += rec.replicaChange
 		}
 	}
@@ -824,11 +819,18 @@ func (a *HorizontalController) getUnableComputeReplicaCountCondition(hpa *autosc
 }
 
 // storeScaleEvent stores (adds or replaces outdated) scale event.
-// outdated events to be replaced were marked as outdated in the `getReplicasChangePerPeriod` function
-func (a *HorizontalController) storeScaleEvent(key string, prevReplicas, newReplicas int32) {
+// outdated events to be replaced were marked as outdated in the `markScaleEventsOutdated` function
+func (a *HorizontalController) storeScaleEvent(behavior *autoscalingv2.HorizontalPodAutoscalerBehavior, key string, prevReplicas, newReplicas int32) {
 	var oldSampleIndex int
+	var longestPolicyPeriod int32
 	foundOldSample := false
 	if newReplicas > prevReplicas {
+		if behavior != nil {
+			longestPolicyPeriod = getLongestPolicyPeriod(generateHPAScaleUpBehavior(behavior.ScaleUp))
+		} else {
+			longestPolicyPeriod = scaleUpPeriod
+		}
+		markScaleEventsOutdated(a.scaleUpEvents[key], longestPolicyPeriod)
 		replicaChange := newReplicas - prevReplicas
 		for i, event := range a.scaleUpEvents[key] {
 			if event.outdated {
@@ -843,6 +845,12 @@ func (a *HorizontalController) storeScaleEvent(key string, prevReplicas, newRepl
 			a.scaleUpEvents[key] = append(a.scaleUpEvents[key], newEvent)
 		}
 	} else {
+		if behavior != nil {
+			longestPolicyPeriod = getLongestPolicyPeriod(generateHPAScaleDownBehavior(behavior.ScaleDown))
+		} else {
+			longestPolicyPeriod = scaleDownPeriod
+		}
+		markScaleEventsOutdated(a.scaleDownEvents[key], longestPolicyPeriod)
 		replicaChange := prevReplicas - newReplicas
 		for i, event := range a.scaleDownEvents[key] {
 			if event.outdated {
@@ -1023,21 +1031,43 @@ func calculateScaleUpLimit(currentReplicas int32) int32 {
 	return int32(math.Max(scaleUpLimitFactor*float64(currentReplicas), scaleUpLimitMinimum))
 }
 
+// markScaleEventsOutdated set 'outdated=true' flag for all scale events that are not used by any HPA object
+func markScaleEventsOutdated(scaleEvents []timestampedScaleEvent, longestPolicyPeriod int32) {
+	period := time.Second * time.Duration(longestPolicyPeriod)
+	cutoff := time.Now().Add(-period)
+	for i, event := range scaleEvents {
+		if event.timestamp.Before(cutoff) {
+			// outdated scale event are marked for later reuse
+			scaleEvents[i].outdated = true
+		}
+	}
+}
+
+func getLongestPolicyPeriod(scalingRules *autoscalingv2.HPAScalingRules) int32 {
+	var longestPolicyPeriod int32
+	for _, policy := range scalingRules.Policies {
+		if policy.PeriodSeconds > longestPolicyPeriod {
+			longestPolicyPeriod = policy.PeriodSeconds
+		}
+	}
+	return longestPolicyPeriod
+}
+
 // calculateScaleUpLimit returns the maximum number of pods that could be added given the constraint.Rate
 // Check defaultHPAScaleUpBehavior for default values and policies
 // If the user specify any policy (or several policies), it overrides the default policies
-func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior *autoscalingv2.HPAScalingRules) int32 {
+func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = 0
 	var proposed int32
 	var selectPolicyFn func(int32, int32) int32
-	if *behavior.SelectPolicy == autoscalingv2.DisabledPolicySelect {
+	if *scalingRules.SelectPolicy == autoscalingv2.DisabledPolicySelect {
 		return currentReplicas // Scaling is disabled
-	} else if *behavior.SelectPolicy == autoscalingv2.MinPolicySelect {
+	} else if *scalingRules.SelectPolicy == autoscalingv2.MinPolicySelect {
 		selectPolicyFn = min // For scaling up, the lowest change ('min' policy) produces a minimum value
 	} else {
 		selectPolicyFn = max // Use the default policy otherwise to produce a highest possible change
 	}
-	for _, policy := range behavior.Policies {
+	for _, policy := range scalingRules.Policies {
 		replicasAddedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
 		periodStartReplicas := currentReplicas - replicasAddedInCurrentPeriod
 		if policy.Type == autoscalingv2.PodsScalingPolicy {
@@ -1054,18 +1084,18 @@ func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []tim
 // calculateScaleDownLimit returns the maximum number of pods that could be deleted for the given rate
 // Check defaultHPAScaleDownBehavior for default values and policies
 // If the user specify any policy (or several policies), it overrides the default policies
-func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, behavior *autoscalingv2.HPAScalingRules) int32 {
+func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = math.MaxInt32
 	var proposed int32
 	var selectPolicyFn func(int32, int32) int32
-	if *behavior.SelectPolicy == autoscalingv2.DisabledPolicySelect {
+	if *scalingRules.SelectPolicy == autoscalingv2.DisabledPolicySelect {
 		return currentReplicas // Scaling is disabled
-	} else if *behavior.SelectPolicy == autoscalingv2.MinPolicySelect {
+	} else if *scalingRules.SelectPolicy == autoscalingv2.MinPolicySelect {
 		selectPolicyFn = max // For scaling down, the lowest change ('min' policy) produces a maximum value
 	} else {
 		selectPolicyFn = min // Use the default policy otherwise to produce a highest possible change
 	}
-	for _, policy := range behavior.Policies {
+	for _, policy := range scalingRules.Policies {
 		replicasDeletedInCurrentPeriod := getReplicasChangePerPeriod(policy.PeriodSeconds, scaleEvents)
 		periodStartReplicas := currentReplicas + replicasDeletedInCurrentPeriod
 		if policy.Type == autoscalingv2.PodsScalingPolicy {

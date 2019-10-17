@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -2165,7 +2164,7 @@ func TestUpscaleCap(t *testing.T) {
 		maxReplicas:             100,
 		specReplicas:            3,
 		statusReplicas:          3,
-		scaleUpBehavior:         generateBehavior(nil, utilpointer.Int32Ptr(700), nil),
+		scaleUpBehavior:         generateBehavior(0, 0, 700, 60),
 		initialReplicas:         3,
 		expectedDesiredReplicas: 24,
 		CPUTarget:               10,
@@ -2187,7 +2186,7 @@ func TestUpscaleCapGreaterThanMaxReplicas(t *testing.T) {
 		maxReplicas:     20,
 		specReplicas:    3,
 		statusReplicas:  3,
-		scaleUpBehavior: generateBehavior(nil, utilpointer.Int32Ptr(700), nil),
+		scaleUpBehavior: generateBehavior(0, 0, 700, 60),
 		initialReplicas: 3,
 		// expectedDesiredReplicas would be 24 without maxReplicas
 		expectedDesiredReplicas: 20,
@@ -2974,42 +2973,41 @@ func TestConvertDesiredReplicasWithRules(t *testing.T) {
 	}
 }
 
-func generateBehavior(pods, percent, period *int32) *autoscalingv2.HPAScalingRules {
-	if period == nil {
-		period = utilpointer.Int32Ptr(60)
-	}
+func generateBehavior(pods, podsPeriod, percent, percentPeriod int32) *autoscalingv2.HPAScalingRules {
 	directionBehavior := autoscalingv2.HPAScalingRules{}
-	if pods != nil {
+	if pods != 0 {
 		directionBehavior.Policies = append(directionBehavior.Policies,
-			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PodsScalingPolicy, Value: *pods, PeriodSeconds: *period})
+			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PodsScalingPolicy, Value: pods, PeriodSeconds: podsPeriod})
 	}
-	if percent != nil {
+	if percent != 0 {
 		directionBehavior.Policies = append(directionBehavior.Policies,
-			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PercentScalingPolicy, Value: *percent, PeriodSeconds: *period})
+			autoscalingv2.HPAScalingPolicy{Type: autoscalingv2.PercentScalingPolicy, Value: percent, PeriodSeconds: percentPeriod})
 	}
 	return &directionBehavior
 }
 
-func generateEvents(rawEvents []int, periodSeconds int) []timestampedScaleEvent {
-	events := make([]timestampedScaleEvent, len(rawEvents)+2)
+// generateEventsUniformDistribution generates events that uniformly spread in the time window
+//    time.Now()-periodSeconds  ; time.Now()
+// It split the time window into several segments (by the number of events) and put the event in the center of the segment
+// it is needed if you want to create events for several policies (to check how "outdated" flag is set).
+// E.g. generateEventsUniformDistribution([]int{1,2,3,4}, 120) will spread events uniformly for the last 120 seconds:
+//
+//       1          2          3          4
+// -----------------------------------------------
+//  ^          ^          ^          ^          ^
+// -120s      -90s       -60s       -30s       now()
+// And we can safely have two different stabilizationWindows:
+//  - 60s (guaranteed to have last half of events)
+//  - 120s (guaranteed to have all events)
+func generateEventsUniformDistribution(rawEvents []int, periodSeconds int) []timestampedScaleEvent {
+	events := make([]timestampedScaleEvent, len(rawEvents))
+	segmentDuration := float64(periodSeconds) / float64(len(rawEvents))
 	for idx, event := range rawEvents {
-		// calculate random duration less then periodSeconds
-		secondsAgo := time.Duration(rand.Intn(periodSeconds))
+		segmentBoundary := time.Duration(float64(periodSeconds) - segmentDuration*float64(idx+1) + segmentDuration/float64(2))
 		events[idx] = timestampedScaleEvent{
 			replicaChange: int32(event),
-			timestamp:     time.Now().Add(-time.Second * secondsAgo),
+			timestamp:     time.Now().Add(-time.Second * segmentBoundary),
 		}
-	}
-	// Adds one more event that is 1 second below the threshold
-	events[len(rawEvents)] = timestampedScaleEvent{
-		replicaChange: int32(42),
-		timestamp:     time.Now().Add(-time.Second * time.Duration(periodSeconds+1)),
-	}
-	// Adds one more event with outdated=true
-	events[len(rawEvents)+1] = timestampedScaleEvent{
-		replicaChange: int32(42),
-		timestamp:     time.Now().Add(-time.Second * time.Duration(periodSeconds+100)),
-		outdated:      true,
 	}
 	return events
 }
@@ -3103,14 +3101,10 @@ func TestScalingWithRules(t *testing.T) {
 		scaleUpEvents   []timestampedScaleEvent
 		scaleDownEvents []timestampedScaleEvent
 		// HPA Spec arguments
-		specMinReplicas         int32
-		specMaxReplicas         int32
-		policyUpPods            *int32
-		policyUpPercent         *int32
-		policyUpPeriodSeconds   *int32
-		policyDownPods          *int32
-		policyDownPercent       *int32
-		policyDownPeriodSeconds *int32
+		specMinReplicas   int32
+		specMaxReplicas   int32
+		scaleUpBehavior   *autoscalingv2.HPAScalingRules
+		scaleDownBehavior *autoscalingv2.HPAScalingRules
 		// external world state
 		currentReplicas              int32
 		prenormalizedDesiredReplicas int32
@@ -3174,8 +3168,7 @@ func TestScalingWithRules(t *testing.T) {
 			specMaxReplicas:              2000,
 			expectedReplicas:             4,
 			expectedCondition:            "ScaleUpLimit",
-			policyUpPercent:              utilpointer.Int32Ptr(1),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(0, 0, 1, 60),
 			name:                         "scaleUpLimit is the limit because scaleUpLimit < maxReplicas with user policies",
 		},
 		{
@@ -3183,8 +3176,7 @@ func TestScalingWithRules(t *testing.T) {
 			prenormalizedDesiredReplicas: 3,
 			specMinReplicas:              3,
 			specMaxReplicas:              2000,
-			policyDownPods:               utilpointer.Int32Ptr(20),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
+			scaleDownBehavior:            generateBehavior(20, 60, 0, 0),
 			expectedReplicas:             980,
 			expectedCondition:            "ScaleDownLimit",
 			name:                         "scaleDownLimit is the limit because scaleDownLimit > minReplicas with user defined policies",
@@ -3204,9 +3196,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with pods policy larger than percent policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPods:                 utilpointer.Int32Ptr(100),
-			policyUpPercent:              utilpointer.Int32Ptr(100),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(100, 60, 100, 60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             110,
@@ -3216,9 +3206,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with percent policy larger than pods policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPods:                 utilpointer.Int32Ptr(2),
-			policyUpPercent:              utilpointer.Int32Ptr(100),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(2, 60, 100, 60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             20,
@@ -3228,8 +3216,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with spec MaxReplicas limitation with large pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPods:                 utilpointer.Int32Ptr(100),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(100, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 50,
 			expectedReplicas:             50,
@@ -3239,8 +3226,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with spec MaxReplicas limitation with large percent policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPercent:              utilpointer.Int32Ptr(10000),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(10000, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 50,
 			expectedReplicas:             50,
@@ -3250,8 +3236,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with pod policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPods:                 utilpointer.Int32Ptr(30),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(30, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 50,
 			expectedReplicas:             40,
@@ -3261,8 +3246,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleUp with percent policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPercent:              utilpointer.Int32Ptr(200),
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
+			scaleUpBehavior:              generateBehavior(0, 0, 200, 60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 50,
 			expectedReplicas:             30,
@@ -3272,9 +3256,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with percent policy larger than pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPods:               utilpointer.Int32Ptr(20),
-			policyDownPercent:            utilpointer.Int32Ptr(1),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
+			scaleDownBehavior:            generateBehavior(20, 60, 1, 60),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             80,
@@ -3284,9 +3266,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with pod policy larger than percent policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPods:               utilpointer.Int32Ptr(2),
-			policyDownPercent:            utilpointer.Int32Ptr(1),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
+			scaleDownBehavior:            generateBehavior(2, 60, 1, 60),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             98,
@@ -3296,8 +3276,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas=nil limitation with large pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPods:               utilpointer.Int32Ptr(100),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
+			scaleDownBehavior:            generateBehavior(100, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3307,8 +3286,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas limitation with large pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPods:               utilpointer.Int32Ptr(100),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
+			scaleDownBehavior:            generateBehavior(100, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3318,7 +3296,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas limitation with large percent policy",
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			policyDownPercent:            utilpointer.Int32Ptr(100), // 100% removal - is always to 0 => limited by MinReplicas
+			scaleDownBehavior:            generateBehavior(0, 0, 100, 60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3328,9 +3306,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with pod policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPods:               utilpointer.Int32Ptr(5),
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(60),
-			policyDownPercent:            utilpointer.Int32Ptr(0), // otherwise, the default value 100% is used
+			scaleDownBehavior:            generateBehavior(5, 60, 0, 0),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3340,7 +3316,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with percent policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPercent:            utilpointer.Int32Ptr(50),
+			scaleDownBehavior:            generateBehavior(0, 0, 50, 60),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5,
@@ -3348,11 +3324,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleUp with spec MaxReplicas limitation with large pod policy and events",
-			scaleUpEvents:                generateEvents([]int{1, 5, 9}, 120),
+			scaleUpEvents:                generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              200,
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
-			policyUpPods:                 utilpointer.Int32Ptr(300),
+			scaleUpBehavior:              generateBehavior(300, 60, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             200, // 200 < 100 - 15 + 300
@@ -3360,11 +3335,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleUp with spec MaxReplicas limitation with large percent policy and events",
-			scaleUpEvents:                generateEvents([]int{1, 5, 9}, 120),
+			scaleUpEvents:                generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              200,
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(60),
-			policyUpPercent:              utilpointer.Int32Ptr(10000),
+			scaleUpBehavior:              generateBehavior(0, 0, 10000, 60),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             200,
@@ -3374,12 +3348,10 @@ func TestScalingWithRules(t *testing.T) {
 			// corner case for calculating the scaleUpLimit, when we changed pod policy after a lot of scaleUp events
 			// in this case we shouldn't allow scale up, though, the naive formula will suggest that scaleUplimit is less then CurrentReplicas (100-15+5 < 100)
 			name:                         "scaleUp with currentReplicas limitation with rate.PeriodSeconds with a lot of recent scale up events",
-			scaleUpEvents:                generateEvents([]int{1, 5, 9}, 120),
+			scaleUpEvents:                generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(120),
-			policyUpPods:                 utilpointer.Int32Ptr(5),
-			policyUpPercent:              utilpointer.Int32Ptr(0),
+			scaleUpBehavior:              generateBehavior(5, 120, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             100, // 120 seconds ago we had (100 - 15) replicas, now the rate.Pods = 5,
@@ -3387,11 +3359,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleUp with pod policy and previous scale up events",
-			scaleUpEvents:                generateEvents([]int{1, 5, 9}, 120),
+			scaleUpEvents:                generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(120),
-			policyUpPods:                 utilpointer.Int32Ptr(150),
+			scaleUpBehavior:              generateBehavior(150, 120, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             235, // 100 - 15 + 150
@@ -3399,11 +3370,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleUp with percent policy and previous scale up events",
-			scaleUpEvents:                generateEvents([]int{1, 5, 9}, 120),
+			scaleUpEvents:                generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyUpPeriodSeconds:        utilpointer.Int32Ptr(120),
-			policyUpPercent:              utilpointer.Int32Ptr(200),
+			scaleUpBehavior:              generateBehavior(0, 0, 200, 120),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 500,
 			expectedReplicas:             255, // (100 - 15) + 200%
@@ -3412,7 +3382,7 @@ func TestScalingWithRules(t *testing.T) {
 		// ScaleDown with PeriodSeconds usage
 		{
 			name:                         "scaleDown with default policy and previous events",
-			scaleDownEvents:              generateEvents([]int{1, 5, 9}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
 			currentReplicas:              10,
@@ -3422,11 +3392,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleDown with spec MinReplicas=nil limitation with large pod policy and previous events",
-			scaleDownEvents:              generateEvents([]int{1, 5, 9}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPods:               utilpointer.Int32Ptr(115),
+			scaleDownBehavior:            generateBehavior(115, 120, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3434,11 +3403,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleDown with spec MinReplicas limitation with large pod policy and previous events",
-			scaleDownEvents:              generateEvents([]int{1, 5, 9}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPods:               utilpointer.Int32Ptr(130),
+			scaleDownBehavior:            generateBehavior(130, 120, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             5,
@@ -3446,11 +3414,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleDown with spec MinReplicas limitation with large percent policy and previous events",
-			scaleDownEvents:              generateEvents([]int{1, 5, 9}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPercent:            utilpointer.Int32Ptr(100), // 100% removal - is always to 0 => limited by MinReplicas
+			scaleDownBehavior:            generateBehavior(0, 0, 100, 120), // 100% removal - is always to 0 => limited by MinReplicas
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3458,11 +3425,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleDown with pod policy limitation and previous events",
-			scaleDownEvents:              generateEvents([]int{1, 5, 9}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPods:               utilpointer.Int32Ptr(5),
+			scaleDownBehavior:            generateBehavior(5, 120, 0, 0),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             100, // 100 + 15 - 5
@@ -3470,11 +3436,10 @@ func TestScalingWithRules(t *testing.T) {
 		},
 		{
 			name:                         "scaleDown with percent policy limitation and previous events",
-			scaleDownEvents:              generateEvents([]int{2, 4, 6}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{2, 4, 6}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPercent:            utilpointer.Int32Ptr(50),
+			scaleDownBehavior:            generateBehavior(0, 0, 50, 120),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             56, // (100 + 12) - 50%
@@ -3484,11 +3449,10 @@ func TestScalingWithRules(t *testing.T) {
 			// corner case for calculating the scaleDownLimit, when we changed pod or percent policy after a lot of scaleDown events
 			// in this case we shouldn't allow scale down, though, the naive formula will suggest that scaleDownlimit is more then CurrentReplicas (100+30-10% > 100)
 			name:                         "scaleDown with previous events preventing further scale down",
-			scaleDownEvents:              generateEvents([]int{10, 10, 10}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{10, 10, 10}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPercent:            utilpointer.Int32Ptr(10),
+			scaleDownBehavior:            generateBehavior(0, 0, 10, 120),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             100, // (100 + 30) - 10% = 117 is more then 100 (currentReplicas), keep 100
@@ -3497,20 +3461,86 @@ func TestScalingWithRules(t *testing.T) {
 		{
 			// corner case, the same as above, but calculation shows that we should go below zero
 			name:                         "scaleDown with with previous events still allowing more scale down",
-			scaleDownEvents:              generateEvents([]int{10, 10, 10}, 120),
+			scaleDownEvents:              generateEventsUniformDistribution([]int{10, 10, 10}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			policyDownPeriodSeconds:      utilpointer.Int32Ptr(120),
-			policyDownPercent:            utilpointer.Int32Ptr(1000),
+			scaleDownBehavior:            generateBehavior(0, 0, 1000, 120),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5, // (10 + 30) - 1000% = -360 is less than 0 and less then 5 (desired by metrics), set 5
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check 'outdated' flag for events for one behavior for up",
+			scaleUpEvents:                generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleUpBehavior:              generateBehavior(1000, 60, 0, 0),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 200,
+			expectedReplicas:             200,
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check that events were not marked 'outdated' for two different policies in the behavior for up",
+			scaleUpEvents:                generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleUpBehavior:              generateBehavior(1000, 120, 100, 60),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 200,
+			expectedReplicas:             200,
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check that events were marked 'outdated' for two different policies in the behavior for up",
+			scaleUpEvents:                generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleUpBehavior:              generateBehavior(1000, 30, 100, 60),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 200,
+			expectedReplicas:             200,
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check 'outdated' flag for events for one behavior for down",
+			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleDownBehavior:            generateBehavior(1000, 60, 0, 0),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 5,
+			expectedReplicas:             5,
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check that events were not marked 'outdated' for two different policies in the behavior for down",
+			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleDownBehavior:            generateBehavior(1000, 120, 100, 60),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 5,
+			expectedReplicas:             5,
+			expectedCondition:            "DesiredWithinRange",
+		},
+		{
+			name:                         "check that events were marked 'outdated' for two different policies in the behavior for down",
+			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
+			specMinReplicas:              1,
+			specMaxReplicas:              1000,
+			scaleDownBehavior:            generateBehavior(1000, 30, 100, 60),
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 5,
+			expectedReplicas:             5,
 			expectedCondition:            "DesiredWithinRange",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+
 			if tc.testThis {
 				return
 			}
@@ -3522,12 +3552,10 @@ func TestScalingWithRules(t *testing.T) {
 					tc.key: tc.scaleDownEvents,
 				},
 			}
-			scaleUpBehavior := generateBehavior(tc.policyUpPods, tc.policyUpPercent, tc.policyUpPeriodSeconds)
-			scaleDownBehavior := generateBehavior(tc.policyDownPods, tc.policyDownPercent, tc.policyDownPeriodSeconds)
 			arg := NormalizationArg{
 				Key:               tc.key,
-				ScaleUpBehavior:   generateHPAScaleUpBehavior(scaleUpBehavior),
-				ScaleDownBehavior: generateHPAScaleDownBehavior(scaleDownBehavior),
+				ScaleUpBehavior:   generateHPAScaleUpBehavior(tc.scaleUpBehavior),
+				ScaleDownBehavior: generateHPAScaleDownBehavior(tc.scaleDownBehavior),
 				MinReplicas:       tc.specMinReplicas,
 				MaxReplicas:       tc.specMaxReplicas,
 				DesiredReplicas:   tc.prenormalizedDesiredReplicas,
@@ -3736,172 +3764,163 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 }
 
 // TestStoreScaleUpEvents tests storeScaleEvent and getReplicasChangePerPeriod for scaleUp events
-func TestStoreScaleUpEvents(t *testing.T) {
-	tests := []struct {
+func TestStoreScaleEvents(t *testing.T) {
+	type TestCase struct {
 		name                   string
 		key                    string
-		prevReplicas           int32
-		newReplicas            int32
+		replicaChange          int32
 		prevScaleEvents        []timestampedScaleEvent
 		newScaleEvents         []timestampedScaleEvent
+		scalingRules           *autoscalingv2.HPAScalingRules
 		expectedReplicasChange int32
-	}{
+	}
+	tests := []TestCase{
 		{
-			"empty entries",
-			"",
-			5,
-			10,
-			[]timestampedScaleEvent{},
-			[]timestampedScaleEvent{{5, time.Now(), false}},
-			0,
+			name:                   "empty entries with default behavior",
+			replicaChange:          5,
+			prevScaleEvents:        []timestampedScaleEvent{}, // no history -> 0 replica change
+			newScaleEvents:         []timestampedScaleEvent{{5, time.Now(), false}},
+			expectedReplicasChange: 0,
 		},
 		{
-			"one outdated entry to be replaced",
-			"",
-			5,
-			10,
-			[]timestampedScaleEvent{ // prevScaleEvents
+			name:                   "empty entries with two-policy-behavior",
+			replicaChange:          5,
+			prevScaleEvents:        []timestampedScaleEvent{}, // no history -> 0 replica change
+			newScaleEvents:         []timestampedScaleEvent{{5, time.Now(), false}},
+			scalingRules:           generateBehavior(10, 60, 100, 60),
+			expectedReplicasChange: 0,
+		},
+		{
+			name:          "one outdated entry to be replaced",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
 				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
 			},
-			[]timestampedScaleEvent{ // newScaleEvents
+			newScaleEvents: []timestampedScaleEvent{
 				{5, time.Now(), false},
 			},
-			0,
+			expectedReplicasChange: 0,
 		},
 		{
-			"two entries, one of them to be replaced",
-			"",
-			5,
-			10,
-			[]timestampedScaleEvent{ // prevScaleEvents
+			name:          "one outdated entry to be replaced with behavior",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
+				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
+			},
+			newScaleEvents: []timestampedScaleEvent{
+				{5, time.Now(), false},
+			},
+			scalingRules:           generateBehavior(10, 60, 100, 60),
+			expectedReplicasChange: 0,
+		},
+		{
+			name:          "one actual entry to be not touched with behavior",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
+				{7, time.Now().Add(-time.Second * time.Duration(58)), false},
+			},
+			newScaleEvents: []timestampedScaleEvent{
+				{7, time.Now(), false},
+				{5, time.Now(), false},
+			},
+			scalingRules:           generateBehavior(10, 60, 100, 60),
+			expectedReplicasChange: 7,
+		},
+		{
+			name:          "two entries, one of them to be replaced",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
 				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
 				{6, time.Now().Add(-time.Second * time.Duration(59)), false},
 			},
-			[]timestampedScaleEvent{ // newScaleEvents
+			newScaleEvents: []timestampedScaleEvent{
 				{5, time.Now(), false},
 				{6, time.Now(), false},
 			},
-			6,
+			expectedReplicasChange: 6,
 		},
 		{
-			"two entries, both actual",
-			"",
-			5,
-			10,
-			[]timestampedScaleEvent{ // prevScaleEvents
-				{7, time.Now().Add(-time.Second * time.Duration(58)), false}, // outdated event, should be replaced
+			name:          "replace one entry, use policies with different periods",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
+				{8, time.Now().Add(-time.Second * time.Duration(29)), false},
+				{6, time.Now().Add(-time.Second * time.Duration(59)), false},
+				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be marked as outdated
+				{9, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
+			},
+			newScaleEvents: []timestampedScaleEvent{
+				{8, time.Now(), false},
+				{6, time.Now(), false},
+				{7, time.Now(), true},
+				{5, time.Now(), false},
+			},
+			scalingRules:           generateBehavior(10, 60, 100, 30),
+			expectedReplicasChange: 14,
+		},
+		{
+			name:          "two entries, both actual",
+			replicaChange: 5,
+			prevScaleEvents: []timestampedScaleEvent{
+				{7, time.Now().Add(-time.Second * time.Duration(58)), false},
 				{6, time.Now().Add(-time.Second * time.Duration(59)), false},
 			},
-			[]timestampedScaleEvent{ // newScaleEvents
+			newScaleEvents: []timestampedScaleEvent{
 				{7, time.Now(), false},
 				{6, time.Now(), false},
 				{5, time.Now(), false},
 			},
-			13,
+			scalingRules:           generateBehavior(10, 120, 100, 30),
+			expectedReplicasChange: 13,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hc := HorizontalController{
+			// testing scale up
+			var behaviorUp *autoscalingv2.HorizontalPodAutoscalerBehavior
+			if tc.scalingRules != nil {
+				behaviorUp = &autoscalingv2.HorizontalPodAutoscalerBehavior{
+					ScaleUp: tc.scalingRules,
+				}
+			}
+			hcUp := HorizontalController{
 				scaleUpEvents: map[string][]timestampedScaleEvent{
-					tc.key: tc.prevScaleEvents,
+					tc.key: append([]timestampedScaleEvent{}, tc.prevScaleEvents...),
 				},
 			}
-			gotReplicasChange := getReplicasChangePerPeriod(60, hc.scaleUpEvents[tc.key])
-			assert.Equal(t, tc.expectedReplicasChange, gotReplicasChange)
-			hc.storeScaleEvent(tc.key, tc.prevReplicas, tc.newReplicas)
-			assert.Len(t, hc.scaleUpEvents[tc.key], len(tc.newScaleEvents))
-			for i, gotEvent := range hc.scaleUpEvents[tc.key] {
-				expEvent := tc.newScaleEvents[i]
-				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange)
-				assert.Equal(t, expEvent.outdated, gotEvent.outdated)
+			gotReplicasChangeUp := getReplicasChangePerPeriod(60, hcUp.scaleUpEvents[tc.key])
+			assert.Equal(t, tc.expectedReplicasChange, gotReplicasChangeUp)
+			hcUp.storeScaleEvent(behaviorUp, tc.key, 10, 10+tc.replicaChange)
+			if !assert.Len(t, hcUp.scaleUpEvents[tc.key], len(tc.newScaleEvents), "up: scale events differ in length") {
+				return
 			}
-		})
-	}
-}
-
-// TestStoreScaleDownEvents tests storeScaleEvent and getReplicasChangePerPeriod for scaleDownEvents
-func TestStoreScaleDownEvents(t *testing.T) {
-	tests := []struct {
-		name                   string
-		key                    string
-		prevReplicas           int32
-		newReplicas            int32
-		prevScaleEvents        []timestampedScaleEvent
-		newScaleEvents         []timestampedScaleEvent
-		expectedReplicasChange int32
-	}{
-		{
-			"empty entries",
-			"",
-			10,
-			5,
-			[]timestampedScaleEvent{},
-			[]timestampedScaleEvent{{5, time.Now(), false}},
-			0,
-		},
-		{
-			"one outdated entry to be replaced",
-			"",
-			10,
-			5,
-			[]timestampedScaleEvent{ // prevScaleEvents
-				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
-			},
-			[]timestampedScaleEvent{ // newScaleEvents
-				{5, time.Now(), false},
-			},
-			0,
-		},
-		{
-			"two entries, one of them to be replaced",
-			"",
-			10,
-			5,
-			[]timestampedScaleEvent{ // prevScaleEvents
-				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
-				{6, time.Now().Add(-time.Second * time.Duration(59)), false},
-			},
-			[]timestampedScaleEvent{ // newScaleEvents
-				{5, time.Now(), false},
-				{6, time.Now(), false},
-			},
-			6,
-		},
-		{
-			"two entries, both actual",
-			"",
-			10,
-			5,
-			[]timestampedScaleEvent{ // prevScaleEvents
-				{7, time.Now().Add(-time.Second * time.Duration(58)), false}, // outdated event, should be replaced
-				{6, time.Now().Add(-time.Second * time.Duration(59)), false},
-			},
-			[]timestampedScaleEvent{ // newScaleEvents
-				{7, time.Now(), false},
-				{6, time.Now(), false},
-				{5, time.Now(), false},
-			},
-			13,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			hc := HorizontalController{
+			for i, gotEvent := range hcUp.scaleUpEvents[tc.key] {
+				expEvent := tc.newScaleEvents[i]
+				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, fmt.Sprintf("up: idx:%v replicaChange", i))
+				assert.Equal(t, expEvent.outdated, gotEvent.outdated, fmt.Sprintf("up: idx:%v outdated", i))
+			}
+			// testing scale down
+			var behaviorDown *autoscalingv2.HorizontalPodAutoscalerBehavior
+			if tc.scalingRules != nil {
+				behaviorDown = &autoscalingv2.HorizontalPodAutoscalerBehavior{
+					ScaleDown: tc.scalingRules,
+				}
+			}
+			hcDown := HorizontalController{
 				scaleDownEvents: map[string][]timestampedScaleEvent{
-					tc.key: tc.prevScaleEvents,
+					tc.key: append([]timestampedScaleEvent{}, tc.prevScaleEvents...),
 				},
 			}
-			gotReplicasChange := getReplicasChangePerPeriod(60, hc.scaleDownEvents[tc.key])
-			assert.Equal(t, tc.expectedReplicasChange, gotReplicasChange)
-			hc.storeScaleEvent(tc.key, tc.prevReplicas, tc.newReplicas)
-			assert.Len(t, tc.newScaleEvents, len(hc.scaleDownEvents[tc.key]))
-			for i, gotEvent := range hc.scaleDownEvents[tc.key] {
+			gotReplicasChangeDown := getReplicasChangePerPeriod(60, hcDown.scaleDownEvents[tc.key])
+			assert.Equal(t, tc.expectedReplicasChange, gotReplicasChangeDown)
+			hcDown.storeScaleEvent(behaviorDown, tc.key, 10, 10-tc.replicaChange)
+			if !assert.Len(t, hcDown.scaleDownEvents[tc.key], len(tc.newScaleEvents), "down: scale events differ in length") {
+				return
+			}
+			for i, gotEvent := range hcDown.scaleDownEvents[tc.key] {
 				expEvent := tc.newScaleEvents[i]
-				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange)
-				assert.Equal(t, expEvent.outdated, gotEvent.outdated)
+				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, fmt.Sprintf("down: idx:%v replicaChange", i))
+				assert.Equal(t, expEvent.outdated, gotEvent.outdated, fmt.Sprintf("down: idx:%v outdated", i))
 			}
 		})
 	}
