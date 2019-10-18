@@ -633,6 +633,11 @@ func (a *HorizontalController) reconcileAutoscaler(hpav1Shared *autoscalingv1.Ho
 		// Default value
 		minReplicas = 1
 	}
+	// if behavior is specified, we should fill all the 'nil' values with the default ones
+	if hpa.Spec.Behavior != nil {
+		hpa.Spec.Behavior.ScaleUp = generateHPAScaleUpBehavior(hpa.Spec.Behavior.ScaleUp)
+		hpa.Spec.Behavior.ScaleDown = generateHPAScaleDownBehavior(hpa.Spec.Behavior.ScaleDown)
+	}
 
 	rescale := true
 
@@ -770,8 +775,8 @@ type NormalizationArg struct {
 func (a *HorizontalController) normalizeDesiredReplicasWithBehaviors(hpa *autoscalingv2.HorizontalPodAutoscaler, key string, currentReplicas, prenormalizedDesiredReplicas, minReplicas int32) int32 {
 	normalizationArg := NormalizationArg{
 		Key:               key,
-		ScaleUpBehavior:   generateHPAScaleUpBehavior(hpa.Spec.Behavior.ScaleUp),
-		ScaleDownBehavior: generateHPAScaleDownBehavior(hpa.Spec.Behavior.ScaleDown),
+		ScaleUpBehavior:   hpa.Spec.Behavior.ScaleUp,
+		ScaleDownBehavior: hpa.Spec.Behavior.ScaleDown,
 		MinReplicas:       minReplicas,
 		MaxReplicas:       hpa.Spec.MaxReplicas,
 		CurrentReplicas:   currentReplicas,
@@ -821,15 +826,14 @@ func (a *HorizontalController) getUnableComputeReplicaCountCondition(hpa *autosc
 // storeScaleEvent stores (adds or replaces outdated) scale event.
 // outdated events to be replaced were marked as outdated in the `markScaleEventsOutdated` function
 func (a *HorizontalController) storeScaleEvent(behavior *autoscalingv2.HorizontalPodAutoscalerBehavior, key string, prevReplicas, newReplicas int32) {
+	if behavior == nil {
+		return // we should not store any event as they will not be used
+	}
 	var oldSampleIndex int
 	var longestPolicyPeriod int32
 	foundOldSample := false
 	if newReplicas > prevReplicas {
-		if behavior != nil {
-			longestPolicyPeriod = getLongestPolicyPeriod(generateHPAScaleUpBehavior(behavior.ScaleUp))
-		} else {
-			longestPolicyPeriod = scaleUpPeriod
-		}
+		longestPolicyPeriod = getLongestPolicyPeriod(behavior.ScaleUp)
 		markScaleEventsOutdated(a.scaleUpEvents[key], longestPolicyPeriod)
 		replicaChange := newReplicas - prevReplicas
 		for i, event := range a.scaleUpEvents[key] {
@@ -845,11 +849,7 @@ func (a *HorizontalController) storeScaleEvent(behavior *autoscalingv2.Horizonta
 			a.scaleUpEvents[key] = append(a.scaleUpEvents[key], newEvent)
 		}
 	} else {
-		if behavior != nil {
-			longestPolicyPeriod = getLongestPolicyPeriod(generateHPAScaleDownBehavior(behavior.ScaleDown))
-		} else {
-			longestPolicyPeriod = scaleDownPeriod
-		}
+		longestPolicyPeriod = getLongestPolicyPeriod(behavior.ScaleDown)
 		markScaleEventsOutdated(a.scaleDownEvents[key], longestPolicyPeriod)
 		replicaChange := prevReplicas - newReplicas
 		for i, event := range a.scaleDownEvents[key] {
@@ -1053,9 +1053,9 @@ func getLongestPolicyPeriod(scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	return longestPolicyPeriod
 }
 
-// calculateScaleUpLimit returns the maximum number of pods that could be added given the constraint.Rate
+// calculateScaleUpLimitWithBehavior returns the maximum number of pods that could be added given the constraint.Rate
 // Check defaultHPAScaleUpBehavior for default values and policies
-// If the user specify any policy (or several policies), it overrides the default policies
+// If the user specifies any policy (or several policies), it overrides the default policies
 func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = 0
 	var proposed int32
@@ -1081,9 +1081,9 @@ func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []tim
 	return result
 }
 
-// calculateScaleDownLimit returns the maximum number of pods that could be deleted for the given rate
+// calculateScaleDownLimitWithBehavior returns the maximum number of pods that could be deleted for the given rate
 // Check defaultHPAScaleDownBehavior for default values and policies
-// If the user specify any policy (or several policies), it overrides the default policies
+// If the user specifies any policy (or several policies), it overrides the default policies
 func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = math.MaxInt32
 	var proposed int32
