@@ -949,7 +949,7 @@ func (a *HorizontalController) convertDesiredReplicasWithBehaviorRate(args Norma
 	var possibleLimitingReason, possibleLimitingMessage string
 
 	if args.DesiredReplicas > args.CurrentReplicas {
-		scaleUpLimit := calculateScaleUpLimitWithBehaviors(args.CurrentReplicas, a.scaleUpEvents[args.Key], args.ScaleUpBehavior)
+		scaleUpLimit := calculateScaleUpLimitWithScalingRules(args.CurrentReplicas, a.scaleUpEvents[args.Key], args.ScaleUpBehavior)
 		if scaleUpLimit < args.CurrentReplicas {
 			// We shouldn't scale up further until the scaleUpEvents will be cleaned up
 			scaleUpLimit = args.CurrentReplicas
@@ -1053,10 +1053,10 @@ func getLongestPolicyPeriod(scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	return longestPolicyPeriod
 }
 
-// calculateScaleUpLimitWithBehavior returns the maximum number of pods that could be added given the constraint.Rate
+// calculateScaleUpLimitWithScalingRules returns the maximum number of pods that could be added given the constraint.Rate
 // Check defaultHPAScaleUpBehavior for default values and policies
 // If the user specifies any policy (or several policies), it overrides the default policies
-func calculateScaleUpLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
+func calculateScaleUpLimitWithScalingRules(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = 0
 	var proposed int32
 	var selectPolicyFn func(int32, int32) int32
