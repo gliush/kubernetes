@@ -270,9 +270,7 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutosca
 		for k, v := range old {
 			out.Annotations[k] = v
 		}
-	}
 
-	if in.Spec.Behavior != nil {
 		behaviorEnc, err := json.Marshal(in.Spec.Behavior)
 		if err != nil {
 			return err

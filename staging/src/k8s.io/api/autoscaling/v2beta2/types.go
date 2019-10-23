@@ -72,7 +72,10 @@ type HorizontalPodAutoscalerSpec struct {
 	// If not set, the default metric will be set to 80% average CPU utilization.
 	// +optional
 	Metrics []MetricSpec `json:"metrics,omitempty" protobuf:"bytes,4,rep,name=metrics"`
-	// Behaviour contains the scaling behavior for the HPA
+
+	// behavior configures the scaling behavior of the target
+	// in both Up and Down directions (scaleUp and scaleDown fields respectively).
+	// If not set, the default HPAScalingRules for scale up and scale down are used.
 	// +optional
 	Behavior *HorizontalPodAutoscalerBehavior `json:"behavior,omitempty" protobuf:"bytes,5,opt,name=behavior"`
 }
@@ -120,13 +123,21 @@ type MetricSpec struct {
 	External *ExternalMetricSource `json:"external,omitempty" protobuf:"bytes,5,opt,name=external"`
 }
 
-// HorizontalPodAutoscalerBehavior configures a scaling behavior for Up and Down direction
-// (scaleUp and scaleDown fields respectively)
+// HorizontalPodAutoscalerBehavior configures the scaling behavior of the target
+// in both Up and Down directions (scaleUp and scaleDown fields respectively).
 type HorizontalPodAutoscalerBehavior struct {
-	// constraint value for scaling Up
+	// scaleUp is scaling policy for scaling Up.
+	// If not set, the default value is used:
+	// - The first policy is to increase no more than 4 pods per 60 seconds.
+	// - The second policy limit is to double the number of pods per 60 seconds.
+	// - The policy that provides the highest change is picked.
+	// - No stabilization is used.
 	// +optional
 	ScaleUp *HPAScalingRules `json:"scaleUp,omitempty" protobuf:"bytes,1,opt,name=scaleUp"`
-	// constraint value for scaling Down
+	// scaleDown is scaling policy for scaling Down.
+	// if not set, the default value is used:
+	// - The only policy specified is to allow to scale down to 0 pods.
+	// - Stabilization window is 300sec, i.e., the highest recommendation for the last 300sec is used.
 	// +optional
 	ScaleDown *HPAScalingRules `json:"scaleDown,omitempty" protobuf:"bytes,2,opt,name=scaleDown"`
 }
@@ -135,37 +146,47 @@ type HorizontalPodAutoscalerBehavior struct {
 type ScalingPolicySelect string
 
 const (
-	// MaxPolicySelect selects the policy with the highest possible change
-	MaxPolicySelect ScalingPolicySelect = "max"
-	// MinPolicySelect selects the policy with the lowest possible change
-	MinPolicySelect ScalingPolicySelect = "min"
-	// DisabledPolicySelect disables the scaling in this direction
-	DisabledPolicySelect ScalingPolicySelect = "disabled"
+	// MaxPolicySelect selects the policy with the highest possible change.
+	MaxPolicySelect ScalingPolicySelect = "Max"
+	// MinPolicySelect selects the policy with the lowest possible change.
+	MinPolicySelect ScalingPolicySelect = "Min"
+	// DisabledPolicySelect disables the scaling in this direction.
+	DisabledPolicySelect ScalingPolicySelect = "Disabled"
 )
 
-// HPAScalingRules configures the scaling policy and the policy selector
+// HPAScalingRules configures the scaling behavior for one direction.
+// This Rules are applied after calculating DesiredReplicas from metrics for the HPA.
+// They can limit the scaling velocity by specifying scaling policies.
+// They can prevent flapping by specifying the stabilization window, so that the
+// number of replicas is not set instantly, instead, the safest value from the stabilization
+// window is chosen.
 type HPAScalingRules struct {
-	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while
-	// scaling up or scaling down
+	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be
+	// considered while scaling up or scaling down.
+	// If not set, use the default values:
+	// - For scale up: 0 (i.e. no stabilization is done).
+	// - For scale down: 300 (i.e. the stabilization window is 300 seconds long).
 	// +optional
 	StabilizationWindowSeconds *int32 `json:"stabilizationWindowSeconds" protobuf:"varint,3,opt,name=stabilizationWindowSeconds"`
-	// SelectPolicy is used to specify which policy should be used
+	// selectPolicy is used to specify which policy should be used.
+	// If not set, the default value MaxPolicySelect is used.
 	// +optional
 	SelectPolicy *ScalingPolicySelect `json:"selectPolicy,omitempty" protobuf:"bytes,1,opt,name=selectPolicy"`
-	// Policies is a list of potential scaling polices which can used during scaling
+	// policies is a list of potential scaling polices which can be used during scaling.
+	// At least one policy must be specified, otherwise the HPAScalingRules will be discarded as invalid
 	// +optional
 	Policies []HPAScalingPolicy `json:"policies,omitempty" protobuf:"bytes,2,rep,name=policies"`
 }
 
-// HPAScalingPolicyType is the type of the policy which could be used while making scaling decisions
+// HPAScalingPolicyType is the type of the policy which could be used while making scaling decisions.
 type HPAScalingPolicyType string
 
 const (
 	// PodsScalingPolicy is a policy used to specify a change in absolute number of pods.
-	PodsScalingPolicy HPAScalingPolicyType = "pods"
+	PodsScalingPolicy HPAScalingPolicyType = "Pods"
 	// PercentScalingPolicy is a policy used to specify a relative amount of change with respect to
 	// the current number of pods.
-	PercentScalingPolicy HPAScalingPolicyType = "percent"
+	PercentScalingPolicy HPAScalingPolicyType = "Percent"
 )
 
 // HPAScalingPolicy is a single policy which must hold true for a specified past interval.
