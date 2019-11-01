@@ -73,6 +73,7 @@ message HPAScalingPolicy {
   optional int32 value = 2;
 
   // PeriodSeconds specifies the window of time for which the policy should hold true.
+  // PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min).
   optional int32 periodSeconds = 3;
 }
 
@@ -85,6 +86,7 @@ message HPAScalingPolicy {
 message HPAScalingRules {
   // StabilizationWindowSeconds is the number of seconds for which past recommendations should be
   // considered while scaling up or scaling down.
+  // StabilizationWindowSeconds must be greater than or equal to zero and less than or equal to 3600 (one hour).
   // If not set, use the default values:
   // - For scale up: 0 (i.e. no stabilization is done).
   // - For scale down: 300 (i.e. the stabilization window is 300 seconds long).
