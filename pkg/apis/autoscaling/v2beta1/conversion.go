@@ -275,6 +275,7 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutosca
 		if err != nil {
 			return err
 		}
+		// Even if the annotation for behavior exists, we will just overwrite it
 		out.Annotations[autoscaling.BehaviorSpecsAnnotation] = string(behaviorEnc)
 	}
 
