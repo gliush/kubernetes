@@ -163,6 +163,7 @@ const (
 type HPAScalingRules struct {
 	// StabilizationWindowSeconds is the number of seconds for which past recommendations should be
 	// considered while scaling up or scaling down.
+	// StabilizationWindowSeconds must be greater than or equal to zero and less than or equal to 3600 (one hour).
 	// If not set, use the default values:
 	// - For scale up: 0 (i.e. no stabilization is done).
 	// - For scale down: 300 (i.e. the stabilization window is 300 seconds long).
@@ -196,6 +197,7 @@ type HPAScalingPolicy struct {
 	// Value contains the amount of change which is permitted by the policy.
 	Value int32 `json:"value" protobuf:"varint,2,opt,name=value"`
 	// PeriodSeconds specifies the window of time for which the policy should hold true.
+	// PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min).
 	PeriodSeconds int32 `json:"periodSeconds" protobuf:"varint,3,opt,name=periodSeconds"`
 }
 
