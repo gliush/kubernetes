@@ -178,6 +178,9 @@ func validateScalingRules(rules *autoscaling.HPAScalingRules, fldPath *field.Pat
 		if rules.StabilizationWindowSeconds != nil && *rules.StabilizationWindowSeconds < 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("stabilizationWindowSeconds"), rules.StabilizationWindowSeconds, "must be greater than or equal to zero"))
 		}
+		if rules.StabilizationWindowSeconds != nil && *rules.StabilizationWindowSeconds > 3600 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("stabilizationWindowSeconds"), rules.StabilizationWindowSeconds, "must be less than or equal to 3600"))
+		}
 		if rules.SelectPolicy != nil &&
 			*rules.SelectPolicy != autoscaling.MaxPolicySelect &&
 			*rules.SelectPolicy != autoscaling.MinPolicySelect &&
@@ -208,6 +211,9 @@ func validateScalingPolicy(policy autoscaling.HPAScalingPolicy, fldPath *field.P
 	}
 	if policy.PeriodSeconds <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("periodSeconds"), policy.PeriodSeconds, "must be greater than zero"))
+	}
+	if policy.PeriodSeconds > 1800 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("periodSeconds"), policy.PeriodSeconds, "must be less than or equal to 1800"))
 	}
 	return allErrs
 }
