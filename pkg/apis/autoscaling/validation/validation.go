@@ -30,6 +30,13 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 )
 
+const (
+	// MaxPeriodSeconds is the largest allowed scaling policy period (in seconds)
+	int32 MaxPeriodSeconds = 1800
+	// MaxStabilizationWindowSeconds is the largest allowed stabilization window (in seconds)
+	int32 MaxStabilizationWindowSeconds = 3600
+)
+
 // ValidateScale validates a Scale and returns an ErrorList with any errors.
 func ValidateScale(scale *autoscaling.Scale) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -187,14 +194,14 @@ func validateScalingRules(rules *autoscaling.HPAScalingRules, fldPath *field.Pat
 		if rules.StabilizationWindowSeconds != nil && *rules.StabilizationWindowSeconds < 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("stabilizationWindowSeconds"), rules.StabilizationWindowSeconds, "must be greater than or equal to zero"))
 		}
-		if rules.StabilizationWindowSeconds != nil && *rules.StabilizationWindowSeconds > 3600 {
+		if rules.StabilizationWindowSeconds != nil && *rules.StabilizationWindowSeconds > MaxStabilizationWindowSeconds {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("stabilizationWindowSeconds"), rules.StabilizationWindowSeconds, "must be less than or equal to 3600"))
 		}
 		if rules.SelectPolicy != nil &&
 			*rules.SelectPolicy != autoscaling.MaxPolicySelect &&
 			*rules.SelectPolicy != autoscaling.MinPolicySelect &&
 			*rules.SelectPolicy != autoscaling.DisabledPolicySelect {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("selectPolicy"), rules.SelectPolicy, "must be max, min, or disabled"))
+			allErrs = append(allErrs, field.NotSupported(fldPath.Child("selectPolicy"), rules.SelectPolicy, "must be max, min, or disabled"))
 		}
 		policiesPath := fldPath.Child("policies")
 		if len(rules.Policies) == 0 {
@@ -213,7 +220,7 @@ func validateScalingRules(rules *autoscaling.HPAScalingRules, fldPath *field.Pat
 func validateScalingPolicy(policy autoscaling.HPAScalingPolicy, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if policy.Type != autoscaling.PodsScalingPolicy && policy.Type != autoscaling.PercentScalingPolicy {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("type"), policy.Type, "must be either pods or percent"))
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("type"), policy.Type, "must be either pods or percent"))
 	}
 	if policy.Value <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("value"), policy.Value, "must be greater than zero"))
@@ -221,7 +228,7 @@ func validateScalingPolicy(policy autoscaling.HPAScalingPolicy, fldPath *field.P
 	if policy.PeriodSeconds <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("periodSeconds"), policy.PeriodSeconds, "must be greater than zero"))
 	}
-	if policy.PeriodSeconds > 1800 {
+	if policy.PeriodSeconds > MaxPeriodSeconds {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("periodSeconds"), policy.PeriodSeconds, "must be less than or equal to 1800"))
 	}
 	return allErrs

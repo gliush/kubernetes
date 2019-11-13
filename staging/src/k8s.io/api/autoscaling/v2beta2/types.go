@@ -127,17 +127,16 @@ type MetricSpec struct {
 // in both Up and Down directions (scaleUp and scaleDown fields respectively).
 type HorizontalPodAutoscalerBehavior struct {
 	// scaleUp is scaling policy for scaling Up.
-	// If not set, the default value is used:
-	// - The first policy is to increase no more than 4 pods per 60 seconds.
-	// - The second policy limit is to double the number of pods per 60 seconds.
-	// - The policy that provides the highest change is picked.
-	// - No stabilization is used.
+	// If not set, the default value is the higher of:
+	//   * increase no more than 4 pods per 60 seconds
+	//   * double the number of pods per 60 seconds
+	// No stabilization is used.
 	// +optional
 	ScaleUp *HPAScalingRules `json:"scaleUp,omitempty" protobuf:"bytes,1,opt,name=scaleUp"`
 	// scaleDown is scaling policy for scaling Down.
-	// if not set, the default value is used:
-	// - The only policy specified is to allow to scale down to 0 pods.
-	// - Stabilization window is 300sec, i.e., the highest recommendation for the last 300sec is used.
+	// If not set, the default value is to allow to scale down to minReplicas pods, with a
+	// 300 second stabilization window (i.e., the highest recommendation for
+	// the last 300sec is used).
 	// +optional
 	ScaleDown *HPAScalingRules `json:"scaleDown,omitempty" protobuf:"bytes,2,opt,name=scaleDown"`
 }
@@ -155,7 +154,7 @@ const (
 )
 
 // HPAScalingRules configures the scaling behavior for one direction.
-// This Rules are applied after calculating DesiredReplicas from metrics for the HPA.
+// These Rules are applied after calculating DesiredReplicas from metrics for the HPA.
 // They can limit the scaling velocity by specifying scaling policies.
 // They can prevent flapping by specifying the stabilization window, so that the
 // number of replicas is not set instantly, instead, the safest value from the stabilization
@@ -195,6 +194,7 @@ type HPAScalingPolicy struct {
 	// Type is used to specify the scaling policy.
 	Type HPAScalingPolicyType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=HPAScalingPolicyType"`
 	// Value contains the amount of change which is permitted by the policy.
+	// It must be greater than zero
 	Value int32 `json:"value" protobuf:"varint,2,opt,name=value"`
 	// PeriodSeconds specifies the window of time for which the policy should hold true.
 	// PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min).
