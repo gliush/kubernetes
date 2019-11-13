@@ -61,7 +61,7 @@ func (ExternalMetricStatus) SwaggerDoc() map[string]string {
 var map_HPAScalingPolicy = map[string]string{
 	"":              "HPAScalingPolicy is a single policy which must hold true for a specified past interval.",
 	"type":          "Type is used to specify the scaling policy.",
-	"value":         "Value contains the amount of change which is permitted by the policy.",
+	"value":         "Value contains the amount of change which is permitted by the policy. It must be greater than zero",
 	"periodSeconds": "PeriodSeconds specifies the window of time for which the policy should hold true. PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min).",
 }
 
@@ -70,7 +70,7 @@ func (HPAScalingPolicy) SwaggerDoc() map[string]string {
 }
 
 var map_HPAScalingRules = map[string]string{
-	"":                           "HPAScalingRules configures the scaling behavior for one direction. This Rules are applied after calculating DesiredReplicas from metrics for the HPA. They can limit the scaling velocity by specifying scaling policies. They can prevent flapping by specifying the stabilization window, so that the number of replicas is not set instantly, instead, the safest value from the stabilization window is chosen.",
+	"":                           "HPAScalingRules configures the scaling behavior for one direction. These Rules are applied after calculating DesiredReplicas from metrics for the HPA. They can limit the scaling velocity by specifying scaling policies. They can prevent flapping by specifying the stabilization window, so that the number of replicas is not set instantly, instead, the safest value from the stabilization window is chosen.",
 	"stabilizationWindowSeconds": "StabilizationWindowSeconds is the number of seconds for which past recommendations should be considered while scaling up or scaling down. StabilizationWindowSeconds must be greater than or equal to zero and less than or equal to 3600 (one hour). If not set, use the default values: - For scale up: 0 (i.e. no stabilization is done). - For scale down: 300 (i.e. the stabilization window is 300 seconds long).",
 	"selectPolicy":               "selectPolicy is used to specify which policy should be used. If not set, the default value MaxPolicySelect is used.",
 	"policies":                   "policies is a list of potential scaling polices which can be used during scaling. At least one policy must be specified, otherwise the HPAScalingRules will be discarded as invalid",
@@ -93,8 +93,8 @@ func (HorizontalPodAutoscaler) SwaggerDoc() map[string]string {
 
 var map_HorizontalPodAutoscalerBehavior = map[string]string{
 	"":          "HorizontalPodAutoscalerBehavior configures the scaling behavior of the target in both Up and Down directions (scaleUp and scaleDown fields respectively).",
-	"scaleUp":   "scaleUp is scaling policy for scaling Up. If not set, the default value is used: - The first policy is to increase no more than 4 pods per 60 seconds. - The second policy limit is to double the number of pods per 60 seconds. - The policy that provides the highest change is picked. - No stabilization is used.",
-	"scaleDown": "scaleDown is scaling policy for scaling Down. if not set, the default value is used: - The only policy specified is to allow to scale down to 0 pods. - Stabilization window is 300sec, i.e., the highest recommendation for the last 300sec is used.",
+	"scaleUp":   "scaleUp is scaling policy for scaling Up. If not set, the default value is the higher of:\n  * increase no more than 4 pods per 60 seconds\n  * double the number of pods per 60 seconds\nNo stabilization is used.",
+	"scaleDown": "scaleDown is scaling policy for scaling Down. If not set, the default value is to allow to scale down to minReplicas pods, with a 300 second stabilization window (i.e., the highest recommendation for the last 300sec is used).",
 }
 
 func (HorizontalPodAutoscalerBehavior) SwaggerDoc() map[string]string {
