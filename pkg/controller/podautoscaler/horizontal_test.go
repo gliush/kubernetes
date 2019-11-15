@@ -66,10 +66,6 @@ import (
 // This comment has more info: https://github.com/kubernetes/kubernetes/pull/74525#issuecomment-502653106
 // We need to rework this infrastructure:  https://github.com/kubernetes/kubernetes/issues/79222
 
-// For now I solve this by adding resync period for the informers so that the next reconcile cycle
-// will be run with some delay, during which the test will be checked and stopped
-var defaultTestResyncPeriod = 200 * time.Millisecond
-
 var statusOk = []autoscalingv2.HorizontalPodAutoscalerCondition{
 	{Type: autoscalingv2.AbleToScale, Status: v1.ConditionTrue, Reason: "SucceededRescale"},
 	{Type: autoscalingv2.ScalingActive, Status: v1.ConditionTrue, Reason: "ValidMetricFound"},
@@ -113,7 +109,7 @@ type testCase struct {
 	statusReplicas  int32
 	initialReplicas int32
 	scaleUpRules    *autoscalingv2.HPAScalingRules
-	scaleDonwRules  *autoscalingv2.HPAScalingRules
+	scaleDownRules  *autoscalingv2.HPAScalingRules
 
 	// CPU target utilization as a percentage of the requested resources.
 	CPUTarget                    int32
@@ -203,31 +199,40 @@ func (tc *testCase) prepareTestClient(t *testing.T) (*fake.Clientset, *metricsfa
 	fakeClient.AddReactor("list", "horizontalpodautoscalers", func(action core.Action) (handled bool, ret runtime.Object, err error) {
 		tc.Lock()
 		defer tc.Unlock()
+		var behavior *autoscalingv2.HorizontalPodAutoscalerBehavior
+		if tc.scaleUpRules != nil || tc.scaleDownRules != nil {
+			behavior = &autoscalingv2.HorizontalPodAutoscalerBehavior{
+				ScaleUp:   tc.scaleUpRules,
+				ScaleDown: tc.scaleDownRules,
+			}
+		}
+		hpa := autoscalingv2.HorizontalPodAutoscaler{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hpaName,
+				Namespace: namespace,
+				SelfLink:  "experimental/v1/namespaces/" + namespace + "/horizontalpodautoscalers/" + hpaName,
+			},
+			Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+				ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+					Kind:       tc.resource.kind,
+					Name:       tc.resource.name,
+					APIVersion: tc.resource.apiVersion,
+				},
+				MinReplicas: &tc.minReplicas,
+				MaxReplicas: tc.maxReplicas,
+				Behavior:    behavior,
+			},
+			Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+				CurrentReplicas: tc.specReplicas,
+				DesiredReplicas: tc.specReplicas,
+				LastScaleTime:   tc.lastScaleTime,
+			},
+		}
+		// Initialize default values
+		autoscalingapiv2beta2.SetDefaults_HorizontalPodAutoscalerBehavior(&hpa)
 
 		obj := &autoscalingv2.HorizontalPodAutoscalerList{
-			Items: []autoscalingv2.HorizontalPodAutoscaler{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      hpaName,
-						Namespace: namespace,
-						SelfLink:  "experimental/v1/namespaces/" + namespace + "/horizontalpodautoscalers/" + hpaName,
-					},
-					Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-						ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
-							Kind:       tc.resource.kind,
-							Name:       tc.resource.name,
-							APIVersion: tc.resource.apiVersion,
-						},
-						MinReplicas: &tc.minReplicas,
-						MaxReplicas: tc.maxReplicas,
-					},
-					Status: autoscalingv2.HorizontalPodAutoscalerStatus{
-						CurrentReplicas: tc.specReplicas,
-						DesiredReplicas: tc.specReplicas,
-						LastScaleTime:   tc.lastScaleTime,
-					},
-				},
-			},
+			Items: []autoscalingv2.HorizontalPodAutoscaler{hpa},
 		}
 
 		if tc.CPUTarget > 0 {
@@ -696,7 +701,7 @@ func (tc *testCase) setupController(t *testing.T) (*HorizontalController, inform
 		metricsClient,
 		informerFactory.Autoscaling().V1().HorizontalPodAutoscalers(),
 		informerFactory.Core().V1().Pods(),
-		controller.NoResyncPeriodFunc(),
+		100*time.Millisecond, // we need non-zero resync period to avoid race conditions
 		defaultDownscalestabilizationWindow,
 		defaultTestingTolerance,
 		defaultTestingCpuInitializationPeriod,
@@ -731,10 +736,6 @@ func (tc *testCase) runTestWithController(t *testing.T, hpaController *Horizonta
 	if shouldWait {
 		// We need to wait for events to be broadcasted (sleep for longer than record.sleepDuration).
 		timeoutTime := time.Now().Add(2 * time.Second)
-		// We need to wait a little longer then the defaultTestResyncPeriod
-		//	 but not too long for the second resync to happen
-		// Check the comment  before the `defaultTestResyncPeriod`
-		//timeoutTime := time.Now().Add(time.Duration(1.5 * float32(defaultTestResyncPeriod)))
 		for now := time.Now(); timeoutTime.After(now); now = time.Now() {
 			sleepUntil := timeoutTime.Sub(now)
 			select {
@@ -1255,6 +1256,24 @@ func TestScaleDown(t *testing.T) {
 	tc := testCase{
 		minReplicas:             2,
 		maxReplicas:             6,
+		specReplicas:            5,
+		statusReplicas:          5,
+		expectedDesiredReplicas: 3,
+		CPUTarget:               50,
+		verifyCPUCurrent:        true,
+		reportedLevels:          []uint64{100, 300, 500, 250, 250},
+		reportedCPURequests:     []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
+		useMetricsAPI:           true,
+		recommendations:         []timestampedRecommendation{},
+	}
+	tc.runTest(t)
+}
+
+func TestScaleDownWithScalingRules(t *testing.T) {
+	tc := testCase{
+		minReplicas:             2,
+		maxReplicas:             6,
+		scaleUpRules:            generateScalingRules(0, 0, 100, 15, 30),
 		specReplicas:            5,
 		statusReplicas:          5,
 		expectedDesiredReplicas: 3,
@@ -3109,7 +3128,7 @@ func TestScalingWithRules(t *testing.T) {
 		specMinReplicas int32
 		specMaxReplicas int32
 		scaleUpRules    *autoscalingv2.HPAScalingRules
-		scaleDonwRules  *autoscalingv2.HPAScalingRules
+		scaleDownRules  *autoscalingv2.HPAScalingRules
 		// external world state
 		currentReplicas              int32
 		prenormalizedDesiredReplicas int32
@@ -3181,7 +3200,7 @@ func TestScalingWithRules(t *testing.T) {
 			prenormalizedDesiredReplicas: 3,
 			specMinReplicas:              3,
 			specMaxReplicas:              2000,
-			scaleDonwRules:               generateScalingRules(20, 60, 0, 0, 0),
+			scaleDownRules:               generateScalingRules(20, 60, 0, 0, 0),
 			expectedReplicas:             980,
 			expectedCondition:            "ScaleDownLimit",
 			name:                         "scaleDownLimit is the limit because scaleDownLimit > minReplicas with user defined policies",
@@ -3261,7 +3280,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with percent policy larger than pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(20, 60, 1, 60, 300),
+			scaleDownRules:               generateScalingRules(20, 60, 1, 60, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             80,
@@ -3271,7 +3290,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with pod policy larger than percent policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(2, 60, 1, 60, 300),
+			scaleDownRules:               generateScalingRules(2, 60, 1, 60, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             98,
@@ -3281,7 +3300,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas=nil limitation with large pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(100, 60, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(100, 60, 0, 0, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3291,7 +3310,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas limitation with large pod policy",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(100, 60, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(100, 60, 0, 0, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3301,7 +3320,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with spec MinReplicas limitation with large percent policy",
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 100, 60, 300),
+			scaleDownRules:               generateScalingRules(0, 0, 100, 60, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3311,7 +3330,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with pod policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(5, 60, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(5, 60, 0, 0, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3321,7 +3340,7 @@ func TestScalingWithRules(t *testing.T) {
 			name:                         "scaleDown with percent policy limitation",
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 50, 60, 300),
+			scaleDownRules:               generateScalingRules(0, 0, 50, 60, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5,
@@ -3400,7 +3419,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(115, 120, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(115, 120, 0, 0, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             1,
@@ -3411,7 +3430,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(130, 120, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(130, 120, 0, 0, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             5,
@@ -3422,7 +3441,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              5,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 100, 120, 300), // 100% removal - is always to 0 => limited by MinReplicas
+			scaleDownRules:               generateScalingRules(0, 0, 100, 120, 300), // 100% removal - is always to 0 => limited by MinReplicas
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             5,
@@ -3433,7 +3452,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{1, 5, 9}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(5, 120, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(5, 120, 0, 0, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 2,
 			expectedReplicas:             100, // 100 + 15 - 5
@@ -3444,7 +3463,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{2, 4, 6}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 50, 120, 300),
+			scaleDownRules:               generateScalingRules(0, 0, 50, 120, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             56, // (100 + 12) - 50%
@@ -3457,7 +3476,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{10, 10, 10}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 10, 120, 300),
+			scaleDownRules:               generateScalingRules(0, 0, 10, 120, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 0,
 			expectedReplicas:             100, // (100 + 30) - 10% = 117 is more then 100 (currentReplicas), keep 100
@@ -3469,7 +3488,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{10, 10, 10}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(0, 0, 1000, 120, 300),
+			scaleDownRules:               generateScalingRules(0, 0, 1000, 120, 300),
 			currentReplicas:              10,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5, // (10 + 30) - 1000% = -360 is less than 0 and less then 5 (desired by metrics), set 5
@@ -3513,7 +3532,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(1000, 60, 0, 0, 300),
+			scaleDownRules:               generateScalingRules(1000, 60, 0, 0, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5,
@@ -3524,7 +3543,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(1000, 120, 100, 60, 300),
+			scaleDownRules:               generateScalingRules(1000, 120, 100, 60, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5,
@@ -3535,7 +3554,7 @@ func TestScalingWithRules(t *testing.T) {
 			scaleDownEvents:              generateEventsUniformDistribution([]int{8, 12, 9, 11}, 120),
 			specMinReplicas:              1,
 			specMaxReplicas:              1000,
-			scaleDonwRules:               generateScalingRules(1000, 30, 100, 60, 300),
+			scaleDownRules:               generateScalingRules(1000, 30, 100, 60, 300),
 			currentReplicas:              100,
 			prenormalizedDesiredReplicas: 5,
 			expectedReplicas:             5,
@@ -3560,7 +3579,7 @@ func TestScalingWithRules(t *testing.T) {
 			arg := NormalizationArg{
 				Key:               tc.key,
 				ScaleUpBehavior:   autoscalingapiv2beta2.GenerateHPAScaleUpRules(tc.scaleUpRules),
-				ScaleDownBehavior: autoscalingapiv2beta2.GenerateHPAScaleDownRules(tc.scaleDonwRules),
+				ScaleDownBehavior: autoscalingapiv2beta2.GenerateHPAScaleDownRules(tc.scaleDownRules),
 				MinReplicas:       tc.specMinReplicas,
 				MaxReplicas:       tc.specMaxReplicas,
 				DesiredReplicas:   tc.prenormalizedDesiredReplicas,
