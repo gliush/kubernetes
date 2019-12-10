@@ -101,10 +101,16 @@ func TestValidateBehavior(t *testing.T) {
 	incorrectPolicy := autoscaling.ScalingPolicySelect("incorrect")
 	simplePoliciesList := []autoscaling.HPAScalingPolicy{
 		{
+			Type:          autoscaling.PercentScalingPolicy,
+			Value:         10,
+			PeriodSeconds: 1,
+		},
+		{
 			Type:          autoscaling.PodsScalingPolicy,
 			Value:         1,
-			PeriodSeconds: 2,
-		}}
+			PeriodSeconds: 1800,
+		},
+	}
 	successCases := []autoscaling.HorizontalPodAutoscalerBehavior{
 		{
 			ScaleUp:   nil,
@@ -112,12 +118,12 @@ func TestValidateBehavior(t *testing.T) {
 		},
 		{
 			ScaleUp: &autoscaling.HPAScalingRules{
-				StabilizationWindowSeconds: utilpointer.Int32Ptr(120),
+				StabilizationWindowSeconds: utilpointer.Int32Ptr(3600),
 				SelectPolicy:               &minPolicy,
 				Policies:                   simplePoliciesList,
 			},
 			ScaleDown: &autoscaling.HPAScalingRules{
-				StabilizationWindowSeconds: utilpointer.Int32Ptr(120),
+				StabilizationWindowSeconds: utilpointer.Int32Ptr(0),
 				SelectPolicy:               &disabledPolicy,
 				Policies:                   simplePoliciesList,
 			},
@@ -198,10 +204,58 @@ func TestValidateBehavior(t *testing.T) {
 		{
 			behavior: autoscaling.HorizontalPodAutoscalerBehavior{
 				ScaleUp: &autoscaling.HPAScalingRules{
+					StabilizationWindowSeconds: utilpointer.Int32Ptr(3601),
+					SelectPolicy:               &minPolicy,
+					Policies:                   simplePoliciesList,
+				},
+			},
+			msg: "spec.behavior.scaleUp.stabilizationWindowSeconds: Invalid value: 3601: must be less than or equal to 3600",
+		},
+		{
+			behavior: autoscaling.HorizontalPodAutoscalerBehavior{
+				ScaleDown: &autoscaling.HPAScalingRules{
+					StabilizationWindowSeconds: utilpointer.Int32Ptr(3601),
+					SelectPolicy:               &minPolicy,
+					Policies:                   simplePoliciesList,
+				},
+			},
+			msg: "spec.behavior.scaleDown.stabilizationWindowSeconds: Invalid value: 3601: must be less than or equal to 3600",
+		},
+		{
+			behavior: autoscaling.HorizontalPodAutoscalerBehavior{
+				ScaleUp: &autoscaling.HPAScalingRules{
+					Policies: []autoscaling.HPAScalingPolicy{
+						{
+							Type:          autoscaling.PodsScalingPolicy,
+							Value:         7,
+							PeriodSeconds: 1801,
+						},
+					},
+				},
+			},
+			msg: "spec.behavior.scaleUp.policies[0].periodSeconds: Invalid value: 1801: must be less than or equal to 1800",
+		},
+		{
+			behavior: autoscaling.HorizontalPodAutoscalerBehavior{
+				ScaleDown: &autoscaling.HPAScalingRules{
+					Policies: []autoscaling.HPAScalingPolicy{
+						{
+							Type:          autoscaling.PercentScalingPolicy,
+							Value:         7,
+							PeriodSeconds: 1801,
+						},
+					},
+				},
+			},
+			msg: "spec.behavior.scaleDown.policies[0].periodSeconds: Invalid value: 1801: must be less than or equal to 1800",
+		},
+		{
+			behavior: autoscaling.HorizontalPodAutoscalerBehavior{
+				ScaleUp: &autoscaling.HPAScalingRules{
 					SelectPolicy: &incorrectPolicy,
 					Policies: []autoscaling.HPAScalingPolicy{
 						{
-							Type:          autoscaling.HPAScalingPolicyType("pods"),
+							Type:          autoscaling.PodsScalingPolicy,
 							Value:         7,
 							PeriodSeconds: 8,
 						},
