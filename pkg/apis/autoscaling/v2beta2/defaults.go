@@ -24,9 +24,10 @@ import (
 )
 
 var (
+	// These constants repeats previous HPA behavior
 	scaleUpLimitPercent         int32 = 100
 	scaleUpLimitMinimumPods     int32 = 4
-	scaleUpPeriod               int32 = 60
+	scaleUpPeriod               int32 = 15
 	scaleUpStabilizationSeconds int32
 	maxPolicy                   = autoscalingv2beta2.MaxPolicySelect
 	defaultHPAScaleUpRules      = autoscalingv2beta2.HPAScalingRules{
@@ -45,7 +46,7 @@ var (
 			},
 		},
 	}
-	scaleDownPeriod int32 = 60
+	scaleDownPeriod int32 = 15
 	// Currently we can set the downscaleStabilizationWindow from the command line
 	// So we can not rewrite the command line option from here
 	scaleDownStabilizationSeconds *int32 = nil
