@@ -450,9 +450,9 @@ func prepareHPAWithBehavior(b autoscaling.HorizontalPodAutoscalerBehavior) autos
 }
 
 func TestValidateBehavior(t *testing.T) {
-	maxPolicy := autoscaling.ScalingPolicySelect("max")
-	minPolicy := autoscaling.ScalingPolicySelect("min")
-	disabledPolicy := autoscaling.ScalingPolicySelect("disabled")
+	maxPolicy := autoscaling.MaxPolicySelect
+	minPolicy := autoscaling.MinPolicySelect
+	disabledPolicy := autoscaling.DisabledPolicySelect
 	incorrectPolicy := autoscaling.ScalingPolicySelect("incorrect")
 	successCases := []autoscaling.HorizontalPodAutoscalerBehavior{
 		{
