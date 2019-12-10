@@ -52,43 +52,8 @@ import (
 )
 
 var (
-	scaleUpLimitFactor              = 2.0
-	scaleUpLimitMinimum             = 4.0
-	scaleUpLimitPercent       int32 = 100
-	scaleUpLimitMinimumPods   int32 = 4
-	scaleUpPeriod             int32 = 60
-	scaleUpDelaySeconds       int32
-	maxPolicy                 = autoscalingv2.MaxPolicySelect
-	defaultHPAScaleUpBehavior = autoscalingv2.HPAScalingRules{
-		StabilizationWindowSeconds: &scaleUpDelaySeconds,
-		SelectPolicy:               &maxPolicy,
-		Policies: []autoscalingv2.HPAScalingPolicy{
-			{
-				Type:          autoscalingv2.PodsScalingPolicy,
-				Value:         scaleUpLimitMinimumPods,
-				PeriodSeconds: scaleUpPeriod,
-			},
-			{
-				Type:          autoscalingv2.PercentScalingPolicy,
-				Value:         scaleUpLimitPercent,
-				PeriodSeconds: scaleUpPeriod,
-			},
-		},
-	}
-	scaleDownPeriod             int32 = 60
-	scaleDownDelaySeconds       int32 = 300
-	scaleDownLimitPercent       int32 = 100
-	defaultHPAScaleDownBehavior       = autoscalingv2.HPAScalingRules{
-		StabilizationWindowSeconds: &scaleDownDelaySeconds,
-		SelectPolicy:               &maxPolicy,
-		Policies: []autoscalingv2.HPAScalingPolicy{
-			{
-				Type:          autoscalingv2.PercentScalingPolicy,
-				Value:         scaleDownLimitPercent,
-				PeriodSeconds: scaleDownPeriod,
-			},
-		},
-	}
+	scaleUpLimitFactor  = 2.0
+	scaleUpLimitMinimum = 4.0
 )
 
 type timestampedRecommendation struct {
@@ -633,11 +598,6 @@ func (a *HorizontalController) reconcileAutoscaler(hpav1Shared *autoscalingv1.Ho
 		// Default value
 		minReplicas = 1
 	}
-	// if behavior is specified, we should fill all the 'nil' values with the default ones
-	if hpa.Spec.Behavior != nil {
-		hpa.Spec.Behavior.ScaleUp = generateHPAScaleUpBehavior(hpa.Spec.Behavior.ScaleUp)
-		hpa.Spec.Behavior.ScaleDown = generateHPAScaleDownBehavior(hpa.Spec.Behavior.ScaleDown)
-	}
 
 	rescale := true
 
@@ -773,6 +733,7 @@ type NormalizationArg struct {
 // 3. Apply the constraints period (i.e. add no more than 4 pods per minute)
 // 4. Apply the stabilization (i.e. add no more than 4 pods per minute, and pick the smallest recommendation during last 5 minutes)
 func (a *HorizontalController) normalizeDesiredReplicasWithBehaviors(hpa *autoscalingv2.HorizontalPodAutoscaler, key string, currentReplicas, prenormalizedDesiredReplicas, minReplicas int32) int32 {
+	a.maybeInitScaleDownStabilizationWindow(hpa)
 	normalizationArg := NormalizationArg{
 		Key:               key,
 		ScaleUpBehavior:   hpa.Spec.Behavior.ScaleUp,
@@ -797,6 +758,14 @@ func (a *HorizontalController) normalizeDesiredReplicasWithBehaviors(hpa *autosc
 	}
 
 	return desiredReplicas
+}
+
+func (a *HorizontalController) maybeInitScaleDownStabilizationWindow(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+	behavior := hpa.Spec.Behavior
+	if behavior != nil && behavior.ScaleDown != nil && behavior.ScaleDown.StabilizationWindowSeconds == nil {
+		stabilizationWindowSeconds := (int32)(a.downscaleStabilisationWindow.Seconds())
+		hpa.Spec.Behavior.ScaleDown.StabilizationWindowSeconds = &stabilizationWindowSeconds
+	}
 }
 
 // getReplicasChangePerPeriod function find all the replica changes per period
@@ -912,37 +881,6 @@ func (a *HorizontalController) stabilizeRecommendationWithBehaviors(args Normali
 	return recommendation, reason, message
 }
 
-// generateHPAScaleUpBehavior returns a fully-initialized HPAScalingRules value
-// We guarantee that no pointer in the structure will have the 'nil' value
-func generateHPAScaleUpBehavior(directionBehavior *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
-	defaultBehavior := defaultHPAScaleUpBehavior.DeepCopy()
-	return copyHPABehavior(directionBehavior, defaultBehavior)
-}
-
-// generateHPAScaleDownBehavior returns a fully-initialized HPAScalingRules value
-// We guarantee that no pointer in the structure will have the 'nil' value
-func generateHPAScaleDownBehavior(directionBehavior *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
-	defaultBehavior := defaultHPAScaleDownBehavior.DeepCopy()
-	return copyHPABehavior(directionBehavior, defaultBehavior)
-}
-
-// copyHPABehavior copies all non-`nil` fields in HPA constraint structure
-func copyHPABehavior(from, to *autoscalingv2.HPAScalingRules) *autoscalingv2.HPAScalingRules {
-	if from == nil {
-		return to
-	}
-	if from.SelectPolicy != nil {
-		to.SelectPolicy = from.SelectPolicy
-	}
-	if from.StabilizationWindowSeconds != nil {
-		to.StabilizationWindowSeconds = from.StabilizationWindowSeconds
-	}
-	if from.Policies != nil {
-		to.Policies = from.Policies
-	}
-	return to
-}
-
 // convertDesiredReplicasWithBehaviorRate performs the actual normalization, given the constraint rate
 // It doesn't consider the stabilizationWindow, it is done separately
 func (a *HorizontalController) convertDesiredReplicasWithBehaviorRate(args NormalizationArg) (int32, string, string) {
@@ -1053,9 +991,7 @@ func getLongestPolicyPeriod(scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	return longestPolicyPeriod
 }
 
-// calculateScaleUpLimitWithScalingRules returns the maximum number of pods that could be added given the constraint.Rate
-// Check defaultHPAScaleUpBehavior for default values and policies
-// If the user specifies any policy (or several policies), it overrides the default policies
+// calculateScaleUpLimitWithScalingRules returns the maximum number of pods that could be added for the given HPAScalingRules
 func calculateScaleUpLimitWithScalingRules(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = 0
 	var proposed int32
@@ -1081,9 +1017,7 @@ func calculateScaleUpLimitWithScalingRules(currentReplicas int32, scaleEvents []
 	return result
 }
 
-// calculateScaleDownLimitWithBehavior returns the maximum number of pods that could be deleted for the given rate
-// Check defaultHPAScaleDownBehavior for default values and policies
-// If the user specifies any policy (or several policies), it overrides the default policies
+// calculateScaleDownLimitWithBehavior returns the maximum number of pods that could be deleted for the given HPAScalingRules
 func calculateScaleDownLimitWithBehaviors(currentReplicas int32, scaleEvents []timestampedScaleEvent, scalingRules *autoscalingv2.HPAScalingRules) int32 {
 	var result int32 = math.MaxInt32
 	var proposed int32
