@@ -46,7 +46,7 @@ func TestGenerateScaleDownRules(t *testing.T) {
 		{
 			annotation: "Default values",
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 60},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 15},
 			},
 			expectedStabilization: nil,
 			expectedSelectPolicy:  string(autoscalingv2.MaxPolicySelect),
@@ -136,8 +136,8 @@ func TestGenerateScaleUpRules(t *testing.T) {
 		{
 			annotation: "Default values",
 			expectedPolicies: []autoscalingv2.HPAScalingPolicy{
-				{Type: autoscalingv2.PodsScalingPolicy, Value: 4, PeriodSeconds: 60},
-				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 60},
+				{Type: autoscalingv2.PodsScalingPolicy, Value: 4, PeriodSeconds: 15},
+				{Type: autoscalingv2.PercentScalingPolicy, Value: 100, PeriodSeconds: 15},
 			},
 			expectedStabilization: utilpointer.Int32Ptr(0),
 			expectedSelectPolicy:  string(autoscalingv2.MaxPolicySelect),
