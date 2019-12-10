@@ -2445,8 +2445,8 @@ func TestDescribeHorizontalPodAutoscaler(t *testing.T) {
 							StabilizationWindowSeconds: utilpointer.Int32Ptr(30),
 							SelectPolicy:               &maxSelectPolicy,
 							Policies: []autoscalingv2beta2.HPAScalingPolicy{
-								{Type: autoscalingv2beta2.PodsScalingPolicy, Value: utilpointer.Int32Ptr(10), PeriodSeconds: utilpointer.Int32Ptr(10)},
-								{Type: autoscalingv2beta2.PercentScalingPolicy, Value: utilpointer.Int32Ptr(10), PeriodSeconds: utilpointer.Int32Ptr(10)},
+								{Type: autoscalingv2beta2.PodsScalingPolicy, Value: 10, PeriodSeconds: 10},
+								{Type: autoscalingv2beta2.PercentScalingPolicy, Value: 10, PeriodSeconds: 10},
 							},
 						},
 					},
@@ -2479,8 +2479,8 @@ func TestDescribeHorizontalPodAutoscaler(t *testing.T) {
 						ScaleDown: &autoscalingv2beta2.HPAScalingRules{
 							StabilizationWindowSeconds: utilpointer.Int32Ptr(30),
 							Policies: []autoscalingv2beta2.HPAScalingPolicy{
-								{Type: autoscalingv2beta2.PodsScalingPolicy, Value: utilpointer.Int32Ptr(10), PeriodSeconds: utilpointer.Int32Ptr(10)},
-								{Type: autoscalingv2beta2.PercentScalingPolicy, Value: utilpointer.Int32Ptr(10), PeriodSeconds: utilpointer.Int32Ptr(10)},
+								{Type: autoscalingv2beta2.PodsScalingPolicy, Value: 10, PeriodSeconds: 10},
+								{Type: autoscalingv2beta2.PercentScalingPolicy, Value: 10, PeriodSeconds: 10},
 							},
 						},
 					},

@@ -3763,7 +3763,7 @@ func TestGenerateScaleDownBehavior(t *testing.T) {
 	}
 }
 
-// TestStoreScaleUpEvents tests storeScaleEvent and getReplicasChangePerPeriod for scaleUp events
+// TestStoreScaleEvents tests events storage and usage
 func TestStoreScaleEvents(t *testing.T) {
 	type TestCase struct {
 		name                   string
@@ -3779,7 +3779,7 @@ func TestStoreScaleEvents(t *testing.T) {
 			name:                   "empty entries with default behavior",
 			replicaChange:          5,
 			prevScaleEvents:        []timestampedScaleEvent{}, // no history -> 0 replica change
-			newScaleEvents:         []timestampedScaleEvent{{5, time.Now(), false}},
+			newScaleEvents:         []timestampedScaleEvent{}, // no behavior -> no events are stored
 			expectedReplicasChange: 0,
 		},
 		{
@@ -3791,13 +3791,13 @@ func TestStoreScaleEvents(t *testing.T) {
 			expectedReplicasChange: 0,
 		},
 		{
-			name:          "one outdated entry to be replaced",
+			name:          "one outdated entry to be kept untouched without behavior",
 			replicaChange: 5,
 			prevScaleEvents: []timestampedScaleEvent{
 				{7, time.Now().Add(-time.Second * time.Duration(61)), false}, // outdated event, should be replaced
 			},
 			newScaleEvents: []timestampedScaleEvent{
-				{5, time.Now(), false},
+				{7, time.Now(), false}, // no behavior -> we don't touch stored events
 			},
 			expectedReplicasChange: 0,
 		},
@@ -3837,6 +3837,7 @@ func TestStoreScaleEvents(t *testing.T) {
 				{5, time.Now(), false},
 				{6, time.Now(), false},
 			},
+			scalingRules:           generateBehavior(10, 60, 0, 0),
 			expectedReplicasChange: 6,
 		},
 		{
@@ -3896,8 +3897,8 @@ func TestStoreScaleEvents(t *testing.T) {
 			}
 			for i, gotEvent := range hcUp.scaleUpEvents[tc.key] {
 				expEvent := tc.newScaleEvents[i]
-				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, fmt.Sprintf("up: idx:%v replicaChange", i))
-				assert.Equal(t, expEvent.outdated, gotEvent.outdated, fmt.Sprintf("up: idx:%v outdated", i))
+				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, "up: idx:%v replicaChange", i)
+				assert.Equal(t, expEvent.outdated, gotEvent.outdated, "up: idx:%v outdated", i)
 			}
 			// testing scale down
 			var behaviorDown *autoscalingv2.HorizontalPodAutoscalerBehavior
@@ -3919,8 +3920,8 @@ func TestStoreScaleEvents(t *testing.T) {
 			}
 			for i, gotEvent := range hcDown.scaleDownEvents[tc.key] {
 				expEvent := tc.newScaleEvents[i]
-				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, fmt.Sprintf("down: idx:%v replicaChange", i))
-				assert.Equal(t, expEvent.outdated, gotEvent.outdated, fmt.Sprintf("down: idx:%v outdated", i))
+				assert.Equal(t, expEvent.replicaChange, gotEvent.replicaChange, "down: idx:%v replicaChange", i)
+				assert.Equal(t, expEvent.outdated, gotEvent.outdated, "down: idx:%v outdated", i)
 			}
 		})
 	}
@@ -4213,5 +4214,3 @@ func TestNoScaleDownOneMetricEmpty(t *testing.T) {
 	tc.testEMClient = testEMClient
 	tc.runTest(t)
 }
-
-// TODO: add more tests for stabilization
